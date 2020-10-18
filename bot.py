@@ -1,10 +1,10 @@
 from collections import deque
 
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
     InputTextMessageContent, ParseMode, CallbackQuery
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, InlineQueryHandler, CallbackQueryHandler
-
+from pymongo.collection import Collection
+import pymongo
 
 queue = deque()
 
@@ -13,10 +13,19 @@ def start(update, context):
     user_id = update.message.chat.id
     reply_keyboard = [[InlineKeyboardButton('Встать в очередь', callback_data='add')],
                       [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
-                      [InlineKeyboardButton('Мое место в очереди', callback_data='check')]]
-    update.message.reply_text(f'Здравствуйте! Пожалуйста, пососите, уважаемый user{user_id}, '
-                              f'потому что этот бот еще ничего не умеет',
-                              reply_markup=InlineKeyboardMarkup(reply_keyboard, resize_keyboard=True))
+                      [InlineKeyboardButton('Мое место в очереди', callback_data='check')],
+                      [InlineKeyboardButton('Выбрать задачу', callback_data='choose_problem')]]
+
+    keyboard2 = [[InlineKeyboardButton('Ввести данные',
+                                       switch_inline_query_current_chat='<Имя> <Фамилия> <Группа>')]]
+
+    if users.find_one({'user_id': user_id}) is None:
+        update.message.reply_text(f'Здравствуйте! Введите, пожалуйста, ваши настоящие имя, фамилию и группу. '
+                                  f'Это необходимо лишь в первый раз.', reply_markup=InlineKeyboardMarkup(keyboard2))
+    else:
+        name = users.find_one({'user_id': user_id})['name']
+        update.message.reply_text(f'Здравствуйте! Что вы хотите сделать, {name}?',
+                                  reply_markup=InlineKeyboardMarkup(reply_keyboard, resize_keyboard=True))
 
 
 def add(update, context):
@@ -58,7 +67,15 @@ def check(update, context):
         query.answer('Ответил')
 
 
+def choose_problem(update, context):
+    pass
+
+
 if __name__ == '__main__':
+    mongo = pymongo.MongoClient('mongodb://localhost:27017/')
+    db = mongo['queue']
+    users: Collection = db['users']
+
     updater = Updater(open('token', 'r').read(), use_context=True)
 
     # Get the dispatcher to register handlers
@@ -72,6 +89,7 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=add, pattern='^add$'))
     dp.add_handler(CallbackQueryHandler(callback=delete, pattern='^delete$'))
     dp.add_handler(CallbackQueryHandler(callback=check, pattern='^check$'))
+    dp.add_handler(CallbackQueryHandler(callback=choose_problem, pattern='^choose_problem$'))
 
     # Start the Bot
     updater.start_polling()
