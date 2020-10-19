@@ -116,6 +116,7 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=check, pattern='^check$'))
     dp.add_handler(CallbackQueryHandler(callback=choose_problem, pattern='^choose_problem$'))
 
+    # messages and inline
     dp.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), add_student))
     dp.add_handler(InlineQueryHandler(find_student))
 
