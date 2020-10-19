@@ -14,8 +14,9 @@ def start(update, context):
     user_id = update.message.chat.id
     reply_keyboard = [[InlineKeyboardButton('Встать в очередь', callback_data='add')],
                       [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
-                      [InlineKeyboardButton('Мое место в очереди', callback_data='check')],
-                      [InlineKeyboardButton('Выбрать задачу', callback_data='choose_problem')]]
+                      [InlineKeyboardButton('Узнать место в очереди', callback_data='check')],
+                      [InlineKeyboardButton('Выбрать задачу',
+                                            switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')]]
 
     keyboard2 = [[InlineKeyboardButton('Ввести данные',
                                        switch_inline_query_current_chat='Начните писать фамилию: ')]]
@@ -67,25 +68,26 @@ def check(update, context):
     query.answer('Ответ в сообщении')
 
 
-def choose_problem(update, context):
-    user_id = update.message.chat.id
-    reply_keyboard = [[InlineKeyboardButton('Встать в очередь', callback_data='add')],
-                      [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
-                      [InlineKeyboardButton('Мое место в очереди', callback_data='check')],
-                      [InlineKeyboardButton('Выбрать задачу', callback_data='choose_problem')]]
-
-
-def find_student(update, context):
+def inline_query(update, context):
     results = []
     query: str = update.inline_query.query
-    query = query.replace('Начните писать фамилию: ', '').lower()
-    for student in students.find():
-        if query in student['name'].lower():
-            s = f"{student['name']} {student['group']}"
-            results.append(InlineQueryResultArticle(
-                            id=str(uuid4()),
-                            title=s,
-                            input_message_content=InputTextMessageContent("Студент: " + s)))
+    if query.startswith('Начните писать фамилию: '):
+        query = query.replace('Начните писать фамилию: ', '').lower()
+        for student in students.find():
+            if query in student['name'].lower():
+                s = f"{student['name']} {student['group']}"
+                results.append(InlineQueryResultArticle(
+                                id=str(uuid4()),
+                                title=s,
+                                input_message_content=InputTextMessageContent("Студент: " + s)))
+    elif query.startswith('Начните писать номер или название ДЗ: '):
+        query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
+        for hw in homeworks.find():
+            if query in hw['name'].lower():
+                results.append(InlineQueryResultArticle(
+                    id=str(uuid4()),
+                    title=hw['name'],
+                    input_message_content=InputTextMessageContent("ДЗ: " + hw['name'])))
     update.inline_query.answer(results[:20])
 
 
@@ -95,7 +97,14 @@ def add_student(update, context):
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     if users.find_one({'user_id': user_id}) is not None:
         return
-    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'place': 0})
+    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'place': 0})
+    start(update, context)
+
+
+def change_problem(update, context):
+    user_id = update.message.chat.id
+    hw = update.message.text.replace('ДЗ: ', '')
+    users.find_one_and_update({'user_id': user_id}, {'$set': {'problem': hw}})
     start(update, context)
 
 
@@ -119,11 +128,11 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=add, pattern='^add$'))
     dp.add_handler(CallbackQueryHandler(callback=delete, pattern='^delete$'))
     dp.add_handler(CallbackQueryHandler(callback=check, pattern='^check$'))
-    dp.add_handler(CallbackQueryHandler(callback=choose_problem, pattern='^choose_problem$'))
 
     # messages and inline
     dp.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), add_student))
-    dp.add_handler(InlineQueryHandler(find_student))
+    dp.add_handler(MessageHandler(Filters.regex('^ДЗ: .*$'), change_problem))
+    dp.add_handler(InlineQueryHandler(inline_query))
 
     # Start the Bot
     updater.start_polling()
