@@ -7,7 +7,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Inlin
 from pymongo.collection import Collection
 import pymongo
 
-queue = deque()
+from start import update_homeworks
 
 
 def start(update, context):
@@ -39,6 +39,11 @@ def add(update, context):
     else:
         new_place = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__() + 1
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
+
+        if new_place == 1:
+            bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Идите сдавать. Удачи!')
+        elif new_place <= 3:
+            bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
 
 
@@ -54,6 +59,15 @@ def delete(update, context):
         size = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__()
         for p in range(old_place + 1, size + 1):
             users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
+        for p in range(1, min(4, size + 1)):
+            user_id = users.find_one({'place': p})['user_id']
+            text = f'Ваше место в очереди — {p}. '
+            if p == 1:
+                text += 'Идите сдавать. Удачи!'
+            else:
+                text += 'Приготовьтесь!'
+            bot.send_message(chat_id=user_id, text=text)
+
         query.answer('Хорошо, теперь вас нет в очереди.')
 
 
@@ -109,6 +123,7 @@ def change_problem(update, context):
 
 
 if __name__ == '__main__':
+    update_homeworks()
     mongo = pymongo.MongoClient('mongodb://localhost:27017/')
     db = mongo['queue']
     users: Collection = db['users']
@@ -119,6 +134,7 @@ if __name__ == '__main__':
 
     # Get the dispatcher to register handlers
     dp = updater.dispatcher
+    bot = updater.bot
 
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("start", start))
