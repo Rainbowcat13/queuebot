@@ -37,7 +37,7 @@ def add(update, context):
     if user['place']:
         query.answer('Вы уже в очереди!')
     else:
-        new_place = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__() + 1
+        new_place = users.find().size() - users.find({'place': 0}).size() + 1
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
 
         if new_place == 1:
@@ -45,6 +45,17 @@ def add(update, context):
         elif new_place <= 3:
             bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
+
+
+def clear(update, context):
+    # query = update.callback_query
+    user_id = update.message.chat.id
+    if admins.find_one({'user_id': user_id}) is None:
+        update.message.reply_text('У вас недостаточно прав для выполнения операции очистки.')
+        return
+    for user in users.find():
+        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'place': 0, 'problem': ''}})
+    update.message.reply_text('Очередь очищена')
 
 
 def delete(update, context):
@@ -56,7 +67,7 @@ def delete(update, context):
     else:
         old_place = user['place']
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
-        size = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__()
+        size = users.find().size() - users.find({'place': 0}).size()
         for p in range(old_place + 1, size + 1):
             users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
         for p in range(1, min(4, size + 1)):
@@ -129,6 +140,7 @@ if __name__ == '__main__':
     users: Collection = db['users']
     students: Collection = db['students']
     homeworks: Collection = db['homeworks']
+    admins: Collection = db['admins']
 
     updater = Updater(open('token', 'r').read(), use_context=True)
 
@@ -139,6 +151,7 @@ if __name__ == '__main__':
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(CommandHandler("restart", start))
+    dp.add_handler(CommandHandler("clear_queue", clear))
 
     # on callbacks
     dp.add_handler(CallbackQueryHandler(callback=add, pattern='^add$'))
