@@ -37,7 +37,7 @@ def add(update, context):
     if user['place']:
         query.answer('Вы уже в очереди!')
     else:
-        new_place = users.find().size() - users.find({'place': 0}).size() + 1
+        new_place = users.find().count() - users.find({'place': 0}).count() + 1
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
 
         if new_place == 1:
@@ -48,7 +48,6 @@ def add(update, context):
 
 
 def clear(update, context):
-    # query = update.callback_query
     user_id = update.message.chat.id
     if admins.find_one({'user_id': user_id}) is None:
         update.message.reply_text('У вас недостаточно прав для выполнения операции очистки.')
@@ -67,10 +66,12 @@ def delete(update, context):
     else:
         old_place = user['place']
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
-        size = users.find().size() - users.find({'place': 0}).size()
-        for p in range(old_place + 1, size + 1):
+        size = users.find().count() - users.find({'place': 0}).count()
+        for p in range(old_place + 1, size + 2):
             users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
+        # print(size)
         for p in range(1, min(4, size + 1)):
+            # print(p)
             user_id = users.find_one({'place': p})['user_id']
             text = f'Ваше место в очереди — {p}. '
             if p == 1:
@@ -78,7 +79,6 @@ def delete(update, context):
             else:
                 text += 'Приготовьтесь!'
             bot.send_message(chat_id=user_id, text=text)
-
         query.answer('Хорошо, теперь вас нет в очереди.')
 
 
