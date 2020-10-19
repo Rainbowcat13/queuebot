@@ -1,4 +1,3 @@
-from collections import deque
 from uuid import uuid4
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
@@ -9,14 +8,17 @@ import pymongo
 
 from start import update_homeworks
 
+TELEGRAMTOKEN: str = open('config/token', 'r').read()
+MONGODB_CLIENT: str = open("config/mongo", "r").read()
 
 def start(update, context):
     user_id = update.message.chat.id
-    reply_keyboard = [[InlineKeyboardButton('Встать в очередь', callback_data='add')],
+    reply_keyboard = [[InlineKeyboardButton('Выбрать задачу',
+                                            switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
+                      [InlineKeyboardButton('Встать в очередь', callback_data='add')],
                       [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
                       [InlineKeyboardButton('Узнать место в очереди', callback_data='check')],
-                      [InlineKeyboardButton('Выбрать задачу',
-                                            switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')]]
+                    ]
 
     keyboard2 = [[InlineKeyboardButton('Ввести данные',
                                        switch_inline_query_current_chat='Начните писать фамилию: ')]]
@@ -36,7 +38,7 @@ def add(update, context):
     user = users.find_one({'user_id': user_id})
     if user['place']:
         query.answer('Вы уже в очереди!')
-    else:
+    elif user['problem']:
         new_place = users.find().count() - users.find({'place': 0}).count() + 1
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
 
@@ -45,7 +47,8 @@ def add(update, context):
         elif new_place <= 3:
             bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
-
+    else:
+        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать')
 
 def clear(update, context):
     user_id = update.message.chat.id
@@ -63,7 +66,7 @@ def delete(update, context):
     user = users.find_one({'user_id': user_id})
     if not user['place']:
         query.answer('Вас нет в очереди!')
-    else:
+    elif user['problem']:
         old_place = user['place']
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
         size = users.find().count() - users.find({'place': 0}).count()
@@ -80,7 +83,8 @@ def delete(update, context):
                 text += 'Приготовьтесь!'
             bot.send_message(chat_id=user_id, text=text)
         query.answer('Хорошо, теперь вас нет в очереди.')
-
+    else:
+        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую не хотите сдавать')
 
 def check(update, context):
     query = update.callback_query
@@ -135,14 +139,14 @@ def change_problem(update, context):
 
 if __name__ == '__main__':
     update_homeworks()
-    mongo = pymongo.MongoClient('mongodb://localhost:27017/')
+    mongo = pymongo.MongoClient(MONGODB_CLIENT)
     db = mongo['queue']
     users: Collection = db['users']
     students: Collection = db['students']
     homeworks: Collection = db['homeworks']
     admins: Collection = db['admins']
 
-    updater = Updater(open('token', 'r').read(), use_context=True)
+    updater = Updater(TELEGRAMTOKEN, use_context=True)
 
     # Get the dispatcher to register handlers
     dp = updater.dispatcher
