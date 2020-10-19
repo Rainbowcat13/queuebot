@@ -68,7 +68,11 @@ def check(update, context):
 
 
 def choose_problem(update, context):
-    pass
+    user_id = update.message.chat.id
+    reply_keyboard = [[InlineKeyboardButton('Встать в очередь', callback_data='add')],
+                      [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
+                      [InlineKeyboardButton('Мое место в очереди', callback_data='check')],
+                      [InlineKeyboardButton('Выбрать задачу', callback_data='choose_problem')]]
 
 
 def find_student(update, context):
@@ -100,6 +104,7 @@ if __name__ == '__main__':
     db = mongo['queue']
     users: Collection = db['users']
     students: Collection = db['students']
+    homeworks: Collection = db['homeworks']
 
     updater = Updater(open('token', 'r').read(), use_context=True)
 
