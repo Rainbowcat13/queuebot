@@ -11,7 +11,8 @@ def fill_students_db():
     for student in open('students_1', 'r', encoding='utf8').read().splitlines():
         name = ' '.join(student.split()[:-1])
         group = student.split()[-1]
-        students.insert_one({'name': name, 'group': group})
+        if students.find_one({'name': name, 'group': group}) is None:
+            students.insert_one({'name': name, 'group': group})
     mongo.close()
 
 
