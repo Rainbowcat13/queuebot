@@ -25,47 +25,46 @@ def start(update, context):
                                   f'Это необходимо лишь в первый раз.', reply_markup=InlineKeyboardMarkup(keyboard2))
     else:
         name = users.find_one({'user_id': user_id})['name']
-        update.message.reply_text(f'Здравствуйте! Что вы хотите сделать, {name}?',
+        update.message.reply_text(f'Вы — {name}. Что хотите сделать?',
                                   reply_markup=InlineKeyboardMarkup(reply_keyboard, resize_keyboard=True))
 
 
 def add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
-    if user_id in queue:
-        query.answer('Да ты охуел? Ты уже в очереди. Иди в жопу')
+    user = users.find_one({'user_id': user_id})
+    if user['place']:
+        query.answer('Вы уже в очереди!')
     else:
-        queue.append(user_id)
-        query.answer('Хорошо, теперь ты в очереди.')
+        new_place = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__() + 1
+        users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
+        query.answer('Хорошо, теперь вы в очереди.')
 
 
 def delete(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
-    if user_id not in queue:
-        query.answer('Да ты охуел? Тебя нет в очереди. Иди в жопу')
+    user = users.find_one({'user_id': user_id})
+    if not user['place']:
+        query.answer('Вас нет в очереди!')
     else:
-        for i in range(len(queue)):
-            if queue[i] == user_id:
-                del queue[i]
-                break
-        query.answer('Хорошо, теперь тебя нет в очереди.')
+        old_place = user['place']
+        users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
+        size = users.find().__sizeof__() - users.find({'place': 0}).__sizeof__()
+        for p in range(old_place + 1, size + 1):
+            users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
+        query.answer('Хорошо, теперь вас нет в очереди.')
 
 
 def check(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
-    if user_id not in queue:
-        query.message.reply_text('Твое место у параши, а в очереди тебя нет. Иди в жопу')
-        query.answer('Ответил')
+    user = users.find_one({'user_id': user_id})
+    if not user['place']:
+        query.message.reply_text('Вас нет в очереди!')
     else:
-        place = -1
-        for i in range(len(queue)):
-            if queue[i] == user_id:
-                place = i + 1
-                break
-        query.message.reply_text(f'Твое место в очереди: {place}')
-        query.answer('Ответил')
+        query.message.reply_text(f'Ваше место в очереди: {user["place"]}')
+    query.answer('Ответ в сообщении')
 
 
 def choose_problem(update, context):
@@ -92,7 +91,8 @@ def add_student(update, context):
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     if users.find_one({'user_id': user_id}) is not None:
         return
-    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'place': -1})
+    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'place': 0})
+    start(update, context)
 
 
 if __name__ == '__main__':
