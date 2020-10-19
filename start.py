@@ -27,5 +27,6 @@ def update_homeworks():
             homeworks.insert_one({'name': hw})
 
 
-fill_students_db()
-update_homeworks()
+if __name__ == "__main__":
+    fill_students_db()
+    update_homeworks()
