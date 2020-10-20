@@ -10,27 +10,29 @@ from start import update_homeworks
 
 TELEGRAMTOKEN: str = open('config/token', 'r').read()
 MONGODB_CLIENT: str = open('config/mongo', 'r').read()
+TEACHERS = ['Корнеев Георгий Александрович', 'Савон Юлия Константиновна', 'Плотников Андрей Игоревич']
+START_KEYBOARD = [[InlineKeyboardButton('Выбрать задачу',
+                                        switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
+                  [InlineKeyboardButton('Выбрать преподавателя', callback_data='choose_teacher')],
+                  [InlineKeyboardButton('Встать в очередь', callback_data='add')],
+                  [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
+                  [InlineKeyboardButton('Узнать место в очереди', callback_data='check')]
+                  ]
 
 
 def start(update, context):
     user_id = update.message.chat.id
-    reply_keyboard = [[InlineKeyboardButton('Выбрать задачу',
-                                            switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
-                      [InlineKeyboardButton('Встать в очередь', callback_data='add')],
-                      [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
-                      [InlineKeyboardButton('Узнать место в очереди', callback_data='check')],
-                      ]
-
     keyboard2 = [[InlineKeyboardButton('Ввести данные',
                                        switch_inline_query_current_chat='Начните писать фамилию: ')]]
 
     if users.find_one({'user_id': user_id}) is None:
         update.message.reply_text(f'Здравствуйте! Введите, пожалуйста, ваши настоящие имя, фамилию и группу. '
-                                  f'Это необходимо лишь в первый раз.', reply_markup=InlineKeyboardMarkup(keyboard2))
+                                  f'Это необходимо лишь в первый раз.',
+                                  reply_markup=InlineKeyboardMarkup(keyboard2, resize_keyboard=True))
     else:
         name = users.find_one({'user_id': user_id})['name']
         update.message.reply_text(f'Вы — {name}. Что хотите сделать?',
-                                  reply_markup=InlineKeyboardMarkup(reply_keyboard, resize_keyboard=True))
+                                  reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
 
 
 def add(update, context):
@@ -40,7 +42,11 @@ def add(update, context):
     if user['place']:
         query.answer('Вы уже в очереди!')
     elif user['problem']:
-        new_place = users.find().count() - users.find({'place': 0}).count() + 1
+        if not user['teacher']:
+            bot.send_message(chat_id=user_id, text=f'Вы не выбрали преподавателя, которому хотите сдать!')
+            return
+        new_place = users.find({'teacher': user['teacher']}).sort([('place', pymongo.ASCENDING)]).limit(1)
+        new_place = list(new_place)[0]['place'] + 1
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
 
         if new_place == 1:
@@ -49,7 +55,7 @@ def add(update, context):
             bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
     else:
-        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать')
+        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать!')
 
 
 def clear(update, context):
@@ -58,7 +64,7 @@ def clear(update, context):
         update.message.reply_text('У вас недостаточно прав для выполнения операции очистки.')
         return
     for user in users.find():
-        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'place': 0, 'problem': ''}})
+        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'place': 0, 'problem': '', 'teacher': ''}})
     update.message.reply_text('Очередь очищена')
 
 
@@ -71,11 +77,13 @@ def delete(update, context):
     elif user['problem']:
         old_place = user['place']
         users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
-        size = users.find().count() - users.find({'place': 0}).count()
+        teacher = user['teacher']
+        size = users.find({'teacher': teacher}).count() - users.find({'teacher': teacher, 'place': 0}).count()
         for p in range(old_place + 1, size + 2):
-            users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
+            users.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
+        print(size + 1)
         for p in range(1, min(4, size + 1)):
-            user_id = users.find_one({'place': p})['user_id']
+            user_id = users.find_one({'place': p, 'teacher': teacher})['user_id']
             text = f'Ваше место в очереди — {p}. '
             if p == 1:
                 text += 'Идите сдавать. Удачи!'
@@ -84,7 +92,7 @@ def delete(update, context):
             bot.send_message(chat_id=user_id, text=text)
         query.answer('Хорошо, теперь вас нет в очереди.')
     else:
-        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую не хотите сдавать')
+        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдавать')
 
 
 def check(update, context):
@@ -127,7 +135,7 @@ def add_student(update, context):
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     if users.find_one({'user_id': user_id}) is not None:
         return
-    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'place': 0})
+    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'teacher': '', 'place': 0})
     start(update, context)
 
 
@@ -136,6 +144,29 @@ def change_problem(update, context):
     hw = update.message.text.replace('ДЗ: ', '')
     users.find_one_and_update({'user_id': user_id}, {'$set': {'problem': hw}})
     start(update, context)
+
+
+def choose_teacher(update, context):
+    keyboard = [[InlineKeyboardButton('Георгий Корнеев', callback_data='teacher_chosen0')],
+                [InlineKeyboardButton('Юлия Савон', callback_data='teacher_chosen1')],
+                [InlineKeyboardButton('Андрей Плотников', callback_data='teacher_chosen2')]]
+    query = update.callback_query
+    message_id = query.message.message_id
+    user_id = query.message.chat.id
+    bot.edit_message_text(chat_id=user_id, message_id=message_id, text='Выберите преподавателя: ',
+                          reply_markup=InlineKeyboardMarkup(keyboard, resize_keyboard=True))
+
+
+def teacher_chosen(update, context):
+    query = update.callback_query
+    teacher_name = TEACHERS[int(query.data[-1])]
+    user_id = query.message.chat.id
+    users.find_one_and_update({'user_id': user_id}, {'$set': {'teacher': teacher_name}})
+    name = users.find_one({'user_id': user_id})['name']
+    bot.edit_message_text(chat_id=user_id, message_id=query.message.message_id,
+                          text=f'Вы — {name}. Что хотите сделать?',
+                          reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
+    query.answer('Преподаватель выбран')
 
 
 if __name__ == '__main__':
@@ -162,6 +193,8 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=add, pattern='^add$'))
     dp.add_handler(CallbackQueryHandler(callback=delete, pattern='^delete$'))
     dp.add_handler(CallbackQueryHandler(callback=check, pattern='^check$'))
+    dp.add_handler(CallbackQueryHandler(callback=choose_teacher, pattern='^choose_teacher$'))
+    dp.add_handler(CallbackQueryHandler(callback=teacher_chosen, pattern='^teacher_chosen.*$'))
 
     # messages and inline
     dp.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), add_student))
