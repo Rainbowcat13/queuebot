@@ -9,7 +9,8 @@ import pymongo
 from start import update_homeworks
 
 TELEGRAMTOKEN: str = open('config/token', 'r').read()
-MONGODB_CLIENT: str = open("config/mongo", "r").read()
+MONGODB_CLIENT: str = open('config/mongo', 'r').read()
+
 
 def start(update, context):
     user_id = update.message.chat.id
@@ -18,7 +19,7 @@ def start(update, context):
                       [InlineKeyboardButton('Встать в очередь', callback_data='add')],
                       [InlineKeyboardButton('Уйти из очереди', callback_data='delete')],
                       [InlineKeyboardButton('Узнать место в очереди', callback_data='check')],
-                    ]
+                      ]
 
     keyboard2 = [[InlineKeyboardButton('Ввести данные',
                                        switch_inline_query_current_chat='Начните писать фамилию: ')]]
@@ -50,6 +51,7 @@ def add(update, context):
     else:
         bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать')
 
+
 def clear(update, context):
     user_id = update.message.chat.id
     if admins.find_one({'user_id': user_id}) is None:
@@ -72,9 +74,7 @@ def delete(update, context):
         size = users.find().count() - users.find({'place': 0}).count()
         for p in range(old_place + 1, size + 2):
             users.find_one_and_update({'place': p}, {'$set': {'place': p - 1}})
-        # print(size)
         for p in range(1, min(4, size + 1)):
-            # print(p)
             user_id = users.find_one({'place': p})['user_id']
             text = f'Ваше место в очереди — {p}. '
             if p == 1:
@@ -85,6 +85,7 @@ def delete(update, context):
         query.answer('Хорошо, теперь вас нет в очереди.')
     else:
         bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую не хотите сдавать')
+
 
 def check(update, context):
     query = update.callback_query
@@ -106,9 +107,9 @@ def inline_query(update, context):
             if query in student['name'].lower():
                 s = f"{student['name']} {student['group']}"
                 results.append(InlineQueryResultArticle(
-                                id=str(uuid4()),
-                                title=s,
-                                input_message_content=InputTextMessageContent("Студент: " + s)))
+                    id=str(uuid4()),
+                    title=s,
+                    input_message_content=InputTextMessageContent("Студент: " + s)))
     elif query.startswith('Начните писать номер или название ДЗ: '):
         query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
         for hw in homeworks.find():
