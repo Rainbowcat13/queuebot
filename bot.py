@@ -39,15 +39,23 @@ def add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     user = users.find_one({'user_id': user_id})
-    if user['place']:
-        query.answer('Вы уже в очереди!')
-    elif user['problem']:
+    if user['problem']:
         if not user['teacher']:
             bot.send_message(chat_id=user_id, text=f'Вы не выбрали преподавателя, которому хотите сдать!')
             return
-        new_place = users.find({'teacher': user['teacher']}).sort([('place', pymongo.ASCENDING)]).limit(1)
-        new_place = list(new_place)[0]['place'] + 1
-        users.find_one_and_update({'user_id': user_id}, {'$set': {'place': new_place}})
+        already_in_queue = queues.find_one({'user_id': user_id,
+                                            'teacher': users.find_one({'user_id': user_id})['teacher']})
+        if already_in_queue is not None:
+            query.answer('Вы уже в очереди!')
+            return
+        new_place = queues.find({'teacher': user['teacher']}).sort([('place', pymongo.ASCENDING)]).limit(1)
+        new_place = list(new_place)
+        if new_place:
+            new_place = new_place[0]['place'] + 1
+        else:
+            new_place = 1
+        queues.insert_one({'user_id': user_id, 'problem': user['problem'],
+                           'teacher': user['teacher'], 'place': new_place})
 
         if new_place == 1:
             bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Идите сдавать. Удачи!')
@@ -64,7 +72,8 @@ def clear(update, context):
         update.message.reply_text('У вас недостаточно прав для выполнения операции очистки.')
         return
     for user in users.find():
-        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'place': 0, 'problem': '', 'teacher': ''}})
+        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'problem': '', 'teacher': ''}})
+    queues.remove()
     update.message.reply_text('Очередь очищена')
 
 
@@ -72,18 +81,23 @@ def delete(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     user = users.find_one({'user_id': user_id})
-    if not user['place']:
-        query.answer('Вас нет в очереди!')
-    elif user['problem']:
-        old_place = user['place']
-        users.find_one_and_update({'user_id': user_id}, {'$set': {'place': 0}})
+    if user['problem']:
         teacher = user['teacher']
-        size = users.find({'teacher': teacher}).count() - users.find({'teacher': teacher, 'place': 0}).count()
+        if not teacher:
+            bot.send_message(chat_id=user_id, text=f'Вы не выбрали преподавателя, которому хотите сдавать!')
+            return
+        queue_place = queues.find_one({'user_id': user_id, 'teacher': teacher})
+        if queue_place is None:
+            bot.send_message(chat_id=user_id, text='Вас нет в очереди к преподавателю, которого вы выбрали!')
+            return
+        old_place = queue_place['place']
+        queues.remove({'user_id': user_id, 'teacher': teacher})
+        size = queues.find({'teacher': teacher}).count()
         for p in range(old_place + 1, size + 2):
-            users.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
+            queues.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
         print(size + 1)
         for p in range(1, min(4, size + 1)):
-            user_id = users.find_one({'place': p, 'teacher': teacher})['user_id']
+            user_id = queues.find_one({'place': p, 'teacher': teacher})['user_id']
             text = f'Ваше место в очереди — {p}. '
             if p == 1:
                 text += 'Идите сдавать. Удачи!'
@@ -92,17 +106,18 @@ def delete(update, context):
             bot.send_message(chat_id=user_id, text=text)
         query.answer('Хорошо, теперь вас нет в очереди.')
     else:
-        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдавать')
+        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдавать!')
 
 
 def check(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     user = users.find_one({'user_id': user_id})
-    if not user['place']:
+    user_in_queue = queues.find_one({'user_id': user_id, 'teacher': user['teacher']})
+    if user_in_queue is None:
         query.message.reply_text('Вас нет в очереди!')
     else:
-        query.message.reply_text(f'Ваше место в очереди: {user["place"]}')
+        query.message.reply_text(f'Ваше место в очереди: {user_in_queue["place"]}')
     query.answer('Ответ в сообщении')
 
 
@@ -135,7 +150,7 @@ def add_student(update, context):
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     if users.find_one({'user_id': user_id}) is not None:
         return
-    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'teacher': '', 'place': 0})
+    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'teacher': ''})
     start(update, context)
 
 
@@ -177,7 +192,7 @@ if __name__ == '__main__':
     students: Collection = db['students']
     homeworks: Collection = db['homeworks']
     admins: Collection = db['admins']
-
+    queues: Collection = db['queues']
     updater = Updater(TELEGRAMTOKEN, use_context=True)
 
     # Get the dispatcher to register handlers
