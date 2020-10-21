@@ -41,23 +41,28 @@ def add(update, context):
     user = users.find_one({'user_id': user_id})
     if user['problem']:
         if not user['teacher']:
-            bot.send_message(chat_id=user_id, text=f'Вы не выбрали преподавателя, которому хотите сдать!')
+            bot.send_message(chat_id=user_id, text='Вы не выбрали преподавателя, которому хотите сдать!')
             return
         already_in_queue = queues.find_one({'user_id': user_id,
                                             'teacher': users.find_one({'user_id': user_id})['teacher']})
-        print(users.find_one({'user_id': user_id})['teacher'])
-        print(already_in_queue)
         if already_in_queue is not None:
             query.answer('Вы уже в очереди!')
             return
-        new_place = queues.find({'teacher': user['teacher']}).sort([('place', pymongo.ASCENDING)]).limit(1)
+        new_place = queues.find({'teacher': user['teacher'],
+                                 'first_time': not user['was_in_queue']}).sort([('place', pymongo.ASCENDING)]).limit(1)
         new_place = list(new_place)
         if new_place:
             new_place = new_place[0]['place'] + 1
         else:
             new_place = 1
+        if not user['was_in_queue']:
+            size = queues.find({'teacher': user['teacher']}).count()
+            for p in range(size, new_place - 1, -1):
+                queues.find_one_and_update({'place': p, 'teacher': user['teacher']}, {'$set': {'place': p + 1}})
         queues.insert_one({'user_id': user_id, 'problem': user['problem'],
-                           'teacher': user['teacher'], 'place': new_place})
+                           'teacher': user['teacher'], 'place': new_place,
+                           'first_time': not user['was_in_queue']})
+        users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': True}})
 
         msg = f'Ваше место в очереди — {new_place}. Преподаватель — {user["teacher"]}.'
         if new_place == 1:
@@ -66,7 +71,7 @@ def add(update, context):
             bot.send_message(chat_id=user_id, text=msg+' Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
     else:
-        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать!')
+        bot.send_message(chat_id=user_id, text='Вы не выбрали задачу, которую хотите сдать!')
 
 
 def clear(update, context):
@@ -75,7 +80,8 @@ def clear(update, context):
         update.message.reply_text('У вас недостаточно прав для выполнения операции очистки.')
         return
     for user in users.find():
-        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'problem': '', 'teacher': ''}})
+        users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'problem': '', 'teacher': '',
+                                                                          'was_in_queue': False}})
     queues.remove()
     update.message.reply_text('Очередь очищена')
 
@@ -109,13 +115,12 @@ def delete(update, context):
             bot.send_message(chat_id=user_id, text=text)
         query.answer('Хорошо, теперь вас нет в очереди.')
     else:
-        bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдавать!')
+        bot.send_message(chat_id=user_id, text='Вы не выбрали задачу, которую хотите сдавать!')
 
 
 def check(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
-    user = users.find_one({'user_id': user_id})
     user_in_queues = queues.find({'user_id': user_id})
     if user_in_queues is None:
         query.message.reply_text('Вас нет в очереди!')
@@ -156,7 +161,8 @@ def add_student(update, context):
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     if users.find_one({'user_id': user_id}) is not None:
         return
-    users.insert_one({'user_id': user_id, 'name': name, 'group': group, 'problem': '', 'teacher': ''})
+    users.insert_one({'user_id': user_id, 'name': name, 'group': group,
+                      'problem': '', 'teacher': '', 'was_in_queue': False})
     start(update, context)
 
 
