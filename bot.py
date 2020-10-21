@@ -45,6 +45,8 @@ def add(update, context):
             return
         already_in_queue = queues.find_one({'user_id': user_id,
                                             'teacher': users.find_one({'user_id': user_id})['teacher']})
+        print(users.find_one({'user_id': user_id})['teacher'])
+        print(already_in_queue)
         if already_in_queue is not None:
             query.answer('Вы уже в очереди!')
             return
@@ -57,10 +59,11 @@ def add(update, context):
         queues.insert_one({'user_id': user_id, 'problem': user['problem'],
                            'teacher': user['teacher'], 'place': new_place})
 
+        msg = f'Ваше место в очереди — {new_place}. Преподаватель — {user["teacher"]}.'
         if new_place == 1:
-            bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Идите сдавать. Удачи!')
+            bot.send_message(chat_id=user_id, text=msg+' Идите сдавать. Удачи!')
         elif new_place <= 3:
-            bot.send_message(chat_id=user_id, text=f'Ваше место в очереди — {new_place}. Приготовьтесь!')
+            bot.send_message(chat_id=user_id, text=msg+' Приготовьтесь!')
         query.answer('Хорошо, теперь вы в очереди.')
     else:
         bot.send_message(chat_id=user_id, text=f'Вы не выбрали задачу, которую хотите сдать!')
@@ -98,7 +101,7 @@ def delete(update, context):
         print(size + 1)
         for p in range(1, min(4, size + 1)):
             user_id = queues.find_one({'place': p, 'teacher': teacher})['user_id']
-            text = f'Ваше место в очереди — {p}. '
+            text = f'Ваше место в очереди — {p}. Преподаватель {teacher}. '
             if p == 1:
                 text += 'Идите сдавать. Удачи!'
             else:
@@ -113,11 +116,14 @@ def check(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     user = users.find_one({'user_id': user_id})
-    user_in_queue = queues.find_one({'user_id': user_id, 'teacher': user['teacher']})
-    if user_in_queue is None:
+    user_in_queues = queues.find({'user_id': user_id})
+    if user_in_queues is None:
         query.message.reply_text('Вас нет в очереди!')
     else:
-        query.message.reply_text(f'Ваше место в очереди: {user_in_queue["place"]}')
+        text = 'Ваши места в очередях: '
+        for u in user_in_queues:
+            text += f'\n\tПреподаватель {u["teacher"]}: {u["place"]}.'
+        query.message.reply_text(text)
     query.answer('Ответ в сообщении')
 
 
