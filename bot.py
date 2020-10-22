@@ -12,16 +12,16 @@ from bot_model import TELEGRAMTOKEN, TEACHERS, collection_users, collection_stud
     collection_admins, collection_queues, collection_chats_with_broadcast
 
 START_KEYBOARD = [[InlineKeyboardButton('Встать в очередь',
-                                           switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
+                                        switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
                   [InlineKeyboardButton('Отозвать заявку',
-                                           switch_inline_query_current_chat='Начните писать название заявки: ')]
+                                        switch_inline_query_current_chat='Начните писать название заявки: ')]
                   ]
 
 
 def callback_start(update, context):
     user_id = update.message.chat.id
     login_keyboard = [[InlineKeyboardButton('Ввести данные',
-                                       switch_inline_query_current_chat='Начните писать фамилию: ')]]
+                                            switch_inline_query_current_chat='Начните писать фамилию: ')]]
 
     if collection_users.find_one({'user_id': user_id}) is None:
         update.message.reply_text(f'Здравствуйте! Введите, пожалуйста, ваши настоящие имя, фамилию и группу. '
@@ -31,16 +31,16 @@ def callback_start(update, context):
         show_status(user_id)
 
 
-def getElapsedTime(): # todo: return real time
+def getElapsedTime():  # todo: return real time
     return 1337 % 55  # is negative time allowed?
-    
+
 
 def show_status(user_id):
     user_in_queues = collection_queues.find({'user_id': user_id})
-    
+
     shortName = ' '.join(collection_users.find_one({'user_id': user_id})['name'].split()[:2])
     text = f'Студент: {shortName}\nВремя до конца практики: {getElapsedTime()} минут\n\n'
-    
+
     if not user_in_queues.count():
         text += 'У Вас нет активных заявок'
     else:
@@ -48,10 +48,9 @@ def show_status(user_id):
         for u in user_in_queues:
             shortTeacherName = ''.join(map(lambda x: x[0], u["teacher"].split()[1::-1]))
             text += f'{u["problem"]} — {u["place"]} место ({shortTeacherName})\n'
-    
-    
+
     bot.send_message(chat_id=user_id, text=text,
-                                  reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
+                     reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
 
 
 def callback_logout(update, context):
@@ -65,31 +64,33 @@ def callback_add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     user = collection_users.find_one({'user_id': user_id})
-    
+
     already_in_queue = collection_queues.find_one({'user_id': user_id,
-                                        'teacher': collection_users.find_one({'user_id': user_id})['teacher']})
+                                                   'teacher': collection_users.find_one({'user_id': user_id})[
+                                                       'teacher']})
     if already_in_queue is not None:
         query.answer('Вы уже в очереди!')
         return
-    
+
     new_place = collection_queues.find({'teacher': user['teacher'],
-                             'first_time': not user['was_in_queue']}).sort([('place', pymongo.ASCENDING)]).limit(1)
+                                        'first_time': not user['was_in_queue']}).sort(
+        [('place', pymongo.ASCENDING)]).limit(1)
     new_place = list(new_place)
-    
+
     if new_place:
         new_place = new_place[0]['place'] + 1
     else:
         new_place = 1
-        
+
     if not user['was_in_queue']:
         size = collection_queues.find({'teacher': user['teacher']}).count()
         for p in range(size, new_place - 1, -1):
             collection_queues.find_one_and_update({'place': p, 'teacher': user['teacher']}, {'$set': {'place': p + 1}})
-            
+
     collection_queues.insert_one({'user_id': user_id, 'problem': user['problem'],
-                       'teacher': user['teacher'], 'place': new_place,
-                       'first_time': not user['was_in_queue']})
-    
+                                  'teacher': user['teacher'], 'place': new_place,
+                                  'first_time': not user['was_in_queue']})
+
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': True}})
 
     query = update.callback_query
@@ -106,6 +107,7 @@ def callback_add(update, context):
 
     send_queue_updates(user['teacher'])
 
+
 def callback_clear_queue(update, context):
     user_id = update.message.chat.id
     if collection_admins.find_one({'user_id': user_id}) is None:
@@ -119,6 +121,7 @@ def callback_clear_queue(update, context):
 
     for teacher in TEACHERS:
         send_queue_updates(teacher)
+
 
 def callback_delete(update, context):
     query = update.callback_query
@@ -149,12 +152,12 @@ def callback_delete(update, context):
 def callback_inline_query(update, context):
     results = []
     query: str = update.inline_query.query
-    cache_time=300
+    cache_time = 300
     is_personal = False
     if query.startswith('Начните писать фамилию: '):
         query = query.replace('Начните писать фамилию: ', '')
         regex = re.compile(re.escape(query), re.IGNORECASE)
-            
+
         for student in collection_students.find({'name': {'$regex': regex}}):
             s = f"{student['name']} {student['group']}"
             results.append(InlineQueryResultArticle(
@@ -196,18 +199,18 @@ def callback_reg_student(update, context):
 
 def callback_join_queue(update, context):
     keyboard1 = [[InlineKeyboardButton('Георгий Корнеев', callback_data='teacher_chosen0')],
-                [InlineKeyboardButton('Юлия Савон', callback_data='teacher_chosen1')],
-                [InlineKeyboardButton('Андрей Плотников', callback_data='teacher_chosen2')]]
+                 [InlineKeyboardButton('Юлия Савон', callback_data='teacher_chosen1')],
+                 [InlineKeyboardButton('Андрей Плотников', callback_data='teacher_chosen2')]]
 
     query = update.callback_query
     user_id = update.message.chat.id
     user = collection_users.find_one({'user_id': user_id})
-    
+
     hw = update.message.text.replace('ДЗ: ', '')
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'problem': hw}})
-    
+
     update.message.reply_text(f'Текущая задача:\n{hw}\n\nВыберите преподавателя:',
-                                  reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
+                              reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
 
 
 def callback_teacher_chosen(update, context):
@@ -222,9 +225,9 @@ def callback_revoke(update, context):
     query = update.callback_query
     user_id = update.message.chat.id
     problem = update.message.text.replace('Отозвать: ', '')
-    
+
     t = collection_queues.find_one({'user_id': user_id, 'problem': problem})
-    
+
     if not t:
         bot.send_message(chat_id=user_id, text='Ошибка!')
         return
@@ -261,22 +264,24 @@ def send_queue_updates(teacher):
             text += str(st['place']) + ': ' + user_name + '\n'
         if free_queue:
             text += '_в очереди никого нет_\n'
-        text += 'Время обновления: '+strftime("%H:%M:%S")
+        text += 'Время обновления: ' + strftime("%H:%M:%S")
         for chat in collection_chats_with_broadcast.find():
             messages_ids = chat['messages_id']
             if teacher not in messages_ids:
                 msg = bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2, text=text)
                 messages_ids[teacher] = msg['message_id']
-                collection_chats_with_broadcast.find_one_and_update({'chat_id': chat['chat_id']}, {'$set': {'messages_id': messages_ids}})
+                collection_chats_with_broadcast.find_one_and_update({'chat_id': chat['chat_id']},
+                                                                    {'$set': {'messages_id': messages_ids}})
             else:
                 bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
                                       parse_mode=ParseMode.MARKDOWN, text=text)
+
 
 if __name__ == '__main__':
     update_homeworks()
 
     updater = Updater(TELEGRAMTOKEN, use_context=True)
-    
+
     # debug purposes
     # queues.delete_many({})
 
