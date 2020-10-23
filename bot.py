@@ -1,3 +1,4 @@
+import bson
 from uuid import uuid4
 from time import strftime
 
@@ -109,8 +110,9 @@ def callback_add(update, context):
     send_queue_updates(user['teacher'])
 
 
-def callback_clear_queue(update, context):
-    user_id = update.message.chat.id
+def callback_admin_clear_queue(update, context):
+    query = update.callback_query
+    user_id = query.message.chat.id
     if collection_admins.find_one({'user_id': user_id}) is None:
         update.message.reply_text('У вас недостаточно прав для очистки очереди')
         return
@@ -285,14 +287,85 @@ def send_queue_updates(teacher):
         text += 'Время обновления: ' + strftime("%H:%M:%S")
         for chat in collection_chats_with_broadcast.find():
             messages_ids = chat['messages_id']
-            if teacher not in messages_ids:
-                msg = bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2, text=text)
-                messages_ids[teacher] = msg['message_id']
-                collection_chats_with_broadcast.find_one_and_update({'chat_id': chat['chat_id']},
-                                                                    {'$set': {'messages_id': messages_ids}})
-            else:
-                bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
-                                      parse_mode=ParseMode.MARKDOWN, text=text)
+            try:
+                if teacher not in messages_ids:
+                    msg = bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2, text=text)
+                    messages_ids[teacher] = msg['message_id']
+                    collection_chats_with_broadcast.find_one_and_update({'chat_id': chat['chat_id']},
+                                                                        {'$set': {'messages_id': messages_ids}})
+                else:
+                    bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
+                                          parse_mode=ParseMode.MARKDOWN, text=text)
+            except:
+                print(f'Can not send queue updates in chat {chat}')
+
+
+def callback_admin(update, context):
+    user_id = update.message.chat.id
+    if collection_admins.find_one({'user_id': user_id}) is None:
+        update.message.reply_text('У вас недостаточно прав для этого действия')
+        return
+    admin_keyboard = [[InlineKeyboardButton('Очистить очередь', callback_data='admin_clear_queue'),
+                       InlineKeyboardButton('Модерировать очередь', callback_data='admin_moderate_queue_s')]]
+
+    update.message.reply_text('admin panel', reply_markup=InlineKeyboardMarkup(admin_keyboard, resize_keyboard=True))
+
+
+def callback_admin_moderate_queue(update, context):
+    print(context)
+    query = update.callback_query
+    user_id = query.message.chat.id
+
+    if collection_admins.find_one({'user_id': user_id}) is None:
+        update.message.reply_text('У вас недостаточно прав для этого действия')
+        return
+
+    command_info = query.data.replace('admin_moderate_queue_', '')
+    if command_info == 's':
+        keyboard_teacher = [[InlineKeyboardButton('Георгий Корнеев', callback_data='admin_moderate_queue_0'),
+                             InlineKeyboardButton('Юлия Савон', callback_data='admin_moderate_queue_1'),
+                             InlineKeyboardButton('Андрей Плотников', callback_data='admin_moderate_queue_2')]]
+        query.edit_message_text(text='Select teacher',
+                         reply_markup=InlineKeyboardMarkup(keyboard_teacher, resize_keyboard=True))
+    elif command_info[0].isdigit():
+        teacher = TEACHERS[int(command_info[0])]
+        shortTeacherName = ''.join(map(lambda x: x[0], teacher.split()[1::-1]))
+        head_queue = collection_queues.find_one({'teacher': teacher, 'place': 1})
+        if head_queue:
+            head_queue_name = collection_users.find_one({'user_id': head_queue['user_id']})['name']
+            head_queue_problem = head_queue['problem']
+            text = f'На первом месте к {shortTeacherName}: {head_queue_name} \nна задачу {head_queue_problem}. Удалить?'
+            cd = 'admin_moderate_queue_d_' + str(head_queue['user_id']) + '_' + str(head_queue['_id'])
+            query.edit_message_text(text=text, parse_mode=ParseMode.MARKDOWN,
+                             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('удалить', callback_data=cd)]]))
+    elif command_info[0] == 'd':
+        command_info = command_info.split('_')
+        head_queue = collection_queues.find_one({'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])})
+        if head_queue:
+            print(head_queue)
+            teacher = head_queue['teacher']
+            old_place = head_queue['place']
+            collection_queues.delete_many({'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])})
+            size = 0
+            oth = collection_queues.find({'teacher': teacher})
+            if oth:
+                size = oth.count()
+
+            for p in range(old_place + 1, size + 2):
+                collection_queues.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
+
+            for p in range(1, min(4, size + 1)):
+                user_id_ = collection_queues.find_one({'place': p, 'teacher': teacher})['user_id']
+                text = f'Ваше место в очереди — {p}. Преподаватель {teacher}. '
+                if p == 1:
+                    text += 'Идите сдавать. Удачи!'
+                else:
+                    text += 'Приготовьтесь!'
+                bot.send_message(chat_id=user_id_, text=text)
+            send_queue_updates(teacher)
+            query.edit_message_text(text=f'Пользователь удален')
+        else:
+            bot.send_message(text=f'Выбранный пользватель не найден')
 
 
 if __name__ == '__main__':
@@ -313,7 +386,7 @@ if __name__ == '__main__':
     dp.add_handler(CommandHandler("logout", callback_logout))
 
     # priveleged commands
-    dp.add_handler(CommandHandler("clear_queue", callback_clear_queue))
+    dp.add_handler(CommandHandler("admin", callback_admin))
     dp.add_handler(CommandHandler("start_broadcast_table", callback_start_broadcast_table))
     dp.add_handler(CommandHandler("stop_broadcast_table", callback_stop_broadcast_table))
 
@@ -321,6 +394,8 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=callback_add, pattern='^add$'))
     dp.add_handler(CallbackQueryHandler(callback=callback_delete, pattern='^delete$'))
     dp.add_handler(CallbackQueryHandler(callback=callback_teacher_chosen, pattern='^teacher_chosen.*$'))
+    dp.add_handler(CallbackQueryHandler(callback=callback_admin_clear_queue, pattern='^admin_clear_queue$'))
+    dp.add_handler(CallbackQueryHandler(callback=callback_admin_moderate_queue, pattern='^admin_moderate_queue.*$'))
 
     # messages and inline
     dp.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), callback_reg_student))
