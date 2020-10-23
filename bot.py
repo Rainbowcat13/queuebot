@@ -1,6 +1,8 @@
 import bson
+import math
 from uuid import uuid4
-from time import strftime
+
+from time import strftime, time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
     InputTextMessageContent, ParseMode, CallbackQuery
@@ -22,11 +24,9 @@ START_KEYBOARD = [[InlineKeyboardButton('Встать в очередь',
 def callback_start(update, context):
     user_id = update.message.chat.id
     
-    if not isRealUser(update):
+    if not is_real_user(update):
         return
-    
-    collection_admins.insert({'user_id': user_id})
-    
+
     login_keyboard = [[InlineKeyboardButton('Ввести данные',
                                             switch_inline_query_current_chat='Начните писать фамилию: ')]]
 
@@ -39,10 +39,11 @@ def callback_start(update, context):
 
 
 def getElapsedTime():  # todo: return real time
-    return 1337 % 55  # is negative time allowed?
+    t = math.ceil((1603454400 - time()) / 60)
+    return t if t >= 0 else 0
 
 
-def isRealUser(update):
+def is_real_user(update):
     return update.message.chat.type == "private"
 
 
@@ -81,42 +82,29 @@ def callback_add(update, context):
                                                    'teacher': collection_users.find_one({'user_id': user_id})[
                                                        'teacher']})
     
-    if already_in_queue is not None:
+    if already_in_queue is not None and False: #todo: delete this
         bot.edit_message_text(chat_id=user_id, message_id=message_id,
                           text='Вы уже в очереди!')
         return
 
-    new_place = collection_queues.find({'teacher': user['teacher'],
-                                        'first_time': not user['was_in_queue']}).sort(
-        [('place', pymongo.ASCENDING)]).limit(1)
-    new_place = list(new_place)
-
-    if new_place:
-        new_place = new_place[0]['place'] + 1
-    else:
-        new_place = 1
-
-    if not user['was_in_queue']:
-        size = collection_queues.find({'teacher': user['teacher']}).count()
-        for p in range(size, new_place - 1, -1):
-            collection_queues.find_one_and_update({'place': p, 'teacher': user['teacher']}, {'$set': {'place': p + 1}})
-
     collection_queues.insert_one({'user_id': user_id, 'problem': user['problem'],
-                                  'teacher': user['teacher'], 'place': new_place,
-                                  'first_time': not user['was_in_queue']})
-
+                                  'teacher': user['teacher'], 'place': 0,
+                                  'first_time': not user['was_in_queue'], 'insert_time': time()})
+#todo normal not was_in_queue
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': True}})
-    
-    bot.edit_message_text(chat_id=user_id, message_id=message_id,
-                          text=f'Заявка создана!\nВаше место в очереди - {new_place}\n\nЗадача:\n{user["problem"]}\n\nПреподаватель:\n{user["teacher"]}')
+    changed_entries = recalculate_queue(user['teacher'])
+    new_place = 0
+    for entry in changed_entries:
+        if entry['user_id'] == user_id and entry['problem'] == user['problem'] and entry['teacher'] == user['teacher']:
+            new_place = entry['place']
+            break
 
-    if new_place == 1:
-        bot.send_message(chat_id=user_id, text='Идите сдавать. Удачи!')
-    elif new_place <= 3:
-        bot.send_message(chat_id=user_id, text='Приготовьтесь!')
+    msg_text = 'Заявка создана!\nПреподаватель: {}\nЗадание: {}\nВаше место в очереди: {}\n'.format(
+        user['teacher'], user['problem'],new_place)
+    bot.edit_message_text(chat_id=user_id, message_id=message_id, text=msg_text)
 
     show_status(user_id)
-
+    send_messages_to_top_queue(changed_entries)
     send_queue_updates(user['teacher'])
 
 
@@ -141,24 +129,8 @@ def callback_delete(update, context):
     user_id = update.message.chat.id
     user = collection_users.find_one({'user_id': user_id})
     teacher = user['teacher']
-
-    queue_place = collection_queues.find_one({'user_id': user_id, 'teacher': teacher})
-    old_place = queue_place['place']
-
-    collection_queues.delete_many({'user_id': user_id, 'teacher': teacher})
-    size = collection_queues.find({'teacher': teacher}).count()
-
-    for p in range(old_place + 1, size + 2):
-        collection_queues.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
-
-    for p in range(1, min(4, size + 1)):
-        user_id = collection_queues.find_one({'place': p, 'teacher': teacher})['user_id']
-        text = f'Ваше место в очереди — {p}. Преподаватель {teacher}. '
-        if p == 1:
-            text += 'Идите сдавать. Удачи!'
-        else:
-            text += 'Приготовьтесь!'
-        bot.send_message(chat_id=user_id, text=text)
+    collection_queues.delete_many({'user_id': user_id, 'teacher': teacher, 'problem': user['problem']})
+    send_messages_to_top_queue(recalculate_queue(teacher))
     send_queue_updates(teacher)
 
 
@@ -204,7 +176,7 @@ def callback_reg_student(update, context):
     text = update.message.text.replace('Студент: ', '')
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     
-    if not isRealUser(update):
+    if not is_real_user(update):
         return
     
     if collection_users.find_one({'user_id': user_id}) is not None:
@@ -227,7 +199,7 @@ def callback_join_queue(update, context):
     query = update.callback_query
     user_id = update.message.chat.id
     
-    if not isRealUser(update):
+    if not is_real_user(update):
         return
     
     user = collection_users.find_one({'user_id': user_id})
@@ -262,29 +234,23 @@ def callback_teacher_chosen(update, context):
 
 
 def callback_revoke(update, context):
+    if not is_real_user(update):
+        return
     query = update.callback_query
     user_id = update.message.chat.id
-    
-    if not isRealUser(update):
-        return    
-    
     user = collection_users.find_one({'user_id': user_id})
-    
     if user is None:
         return
-    
+
     problem = update.message.text.replace('Отозвать: ', '')
 
-    t = collection_queues.find_one({'user_id': user_id, 'problem': problem})
-
-    if not t:
-        bot.send_message(chat_id=user_id, text='Ошибка!')
+    entry = collection_queues.find_one({'user_id': user_id, 'problem': problem})
+    if not entry:
+        bot.send_message(chat_id=user_id, text='Вас нет в очерекди на эту задачу!')
         return
-
-    collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'teacher': t['teacher'], 'problem': problem}})
+    collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'teacher': entry['teacher'], 'problem': problem}})
     callback_delete(update, context)
     show_status(user_id)
-    send_queue_updates(t['teacher'])
 
 
 def callback_start_broadcast_table(update, context):
@@ -341,7 +307,6 @@ def callback_admin(update, context):
 
 
 def callback_admin_moderate_queue(update, context):
-    print(context)
     query = update.callback_query
     user_id = query.message.chat.id
 
@@ -375,26 +340,44 @@ def callback_admin_moderate_queue(update, context):
             teacher = head_queue['teacher']
             old_place = head_queue['place']
             collection_queues.delete_many({'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])})
-            size = 0
-            oth = collection_queues.find({'teacher': teacher})
-            if oth:
-                size = oth.count()
-
-            for p in range(old_place + 1, size + 2):
-                collection_queues.find_one_and_update({'place': p, 'teacher': teacher}, {'$set': {'place': p - 1}})
-
-            for p in range(1, min(4, size + 1)):
-                user_id_ = collection_queues.find_one({'place': p, 'teacher': teacher})['user_id']
-                text = f'Ваше место в очереди — {p}. Преподаватель {teacher}. '
-                if p == 1:
-                    text += 'Идите сдавать. Удачи!'
-                else:
-                    text += 'Приготовьтесь!'
-                bot.send_message(chat_id=user_id_, text=text)
+            send_messages_to_top_queue(recalculate_queue(teacher))
             send_queue_updates(teacher)
             query.edit_message_text(text=f'Пользователь удален')
         else:
             bot.send_message(text=f'Выбранный пользватель не найден')
+
+
+def recalculate_queue(teacher):
+    old_queue = collection_queues.find({'teacher': teacher})
+    if old_queue:
+        old_places = {}
+        new_places = []
+        with_changes = []
+        old_queue = list(old_queue)
+        old_queue.sort(key=lambda x: (
+            0 if 'first_time' not in x else (0 if x['first_time'] else 1),
+            0 if 'insert_time' not in x else x['insert_time']))
+        for el in old_queue:
+            old_places[el['_id']] = el['place']
+            new_places.append(el)
+        i = 0
+        for n_pl in new_places:
+            i += 1
+            if i != old_places[n_pl['_id']]:
+                n_pl['place'] = i
+                with_changes.append(n_pl)
+                collection_queues.find_one_and_update({'_id': bson.objectid.ObjectId(n_pl['_id'])}, {'$set': {'place': i}})
+        return with_changes
+    return []
+
+
+def send_messages_to_top_queue(entries):
+    for entry in entries:
+        tmp = 'Преподаватель: {}\nЗадание: {}\nВаше место в очереди: {}\n'.format(entry['teacher'], entry['problem'], entry['place'])
+        if entry['place'] == 1:
+            bot.send_message(chat_id=entry['user_id'], text=tmp + 'Идите сдавать. Удачи!')
+        elif entry['place'] <= 3:
+            bot.send_message(chat_id=entry['user_id'], text=tmp + 'Приготовьтесь!')
 
 
 if __name__ == '__main__':
