@@ -47,4 +47,4 @@ def update_homeworks():
 if __name__ == "__main__":
     fill_students_db()
     update_homeworks()
-    set_setting()
+    # set_setting()

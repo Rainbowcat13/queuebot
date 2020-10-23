@@ -41,7 +41,7 @@ def callback_start(update, context):
 
 
 def getElapsedTime():
-    t = math.ceil((collection_settings.find_one()['ending'] - time()) / 60)
+    t = math.ceil((collection_settings['ending'] - time()) / 60)
     t = t if t >= 0 else 0
     d = [' минут', ' минуты', ' минута']
     
@@ -106,6 +106,10 @@ def callback_add(update, context):
     user_id = query.message.chat.id
     message_id = query.message.message_id
     user = collection_users.find_one({'user_id': user_id})
+
+    if time() < collection_settings['starting'] and (not collection_admins.find_one({'user_id': user_id})):
+        query.answer('Практика еще не началась!!!')
+        return
 
     already_in_queue = collection_queues.find_one({'user_id': user_id,
                                                    'teacher': collection_users.find_one({'user_id': user_id})[
@@ -182,7 +186,7 @@ def callback_inline_query(update, context):
     elif query.startswith('Начните писать номер или название ДЗ: '):
         query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
         for hw in collection_homeworks.find():
-            if query in hw['name'].lower() in [s.lower() for s in collection_settings.find_one()['actual_problems']]:
+            if query in hw['name'].lower() in [s.lower() for s in collection_settings['actual_problems']]:
                 results.append(InlineQueryResultArticle(
                     id=str(uuid4()),
                     title=hw['name'],
@@ -377,7 +381,7 @@ def callback_admin_moderate_queue(update, context):
 
 
 def recalculate_queue(teacher):
-    priority = collection_settings.find_one()['problems_priority']
+    priority = collection_settings['problems_priority']
     old_queue = collection_queues.find({'teacher': teacher})
     if old_queue:
         old_places = {}
@@ -431,6 +435,12 @@ def send_messages_to_top_queue(entries):
 
 if __name__ == '__main__':
     update_homeworks()
+    if not collection_admins.find_one({'user_id':316671439}):
+        collection_admins.insert_one({'user_id': 316671439})
+    if not collection_admins.find_one({'user_id':487574745}):
+        collection_admins.insert_one({'user_id': 487574745})
+    if not collection_admins.find_one({'user_id':333728707}):
+        collection_admins.insert_one({'user_id': 333728707})
 
     updater = Updater(TELEGRAMTOKEN, use_context=True)
 
