@@ -21,6 +21,12 @@ START_KEYBOARD = [[InlineKeyboardButton('Встать в очередь',
 
 def callback_start(update, context):
     user_id = update.message.chat.id
+    
+    if not isRealUser(update):
+        return
+    
+    collection_admins.insert({'user_id': user_id})
+    
     login_keyboard = [[InlineKeyboardButton('Ввести данные',
                                             switch_inline_query_current_chat='Начните писать фамилию: ')]]
 
@@ -34,6 +40,10 @@ def callback_start(update, context):
 
 def getElapsedTime():  # todo: return real time
     return 1337 % 55  # is negative time allowed?
+
+
+def isRealUser(update):
+    return update.message.chat.type == "private"
 
 
 def show_status(user_id):
@@ -57,7 +67,7 @@ def show_status(user_id):
 def callback_logout(update, context):
     user_id = update.message.chat.id
     if collection_users.find_one({'user_id': user_id}):
-        collection_users.delete_one({'user_id': user_id})
+        collection_users.delete_one({'user_id': user_id}) # was_in_queue flag is erased here
         update.message.reply_text('Деавторизация успешна')
 
 
@@ -120,7 +130,7 @@ def callback_admin_clear_queue(update, context):
         collection_users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'problem': '', 'teacher': '',
                                                                                      'was_in_queue': False}})
     collection_queues.delete_many({})
-    update.message.reply_text('Очередь очищена')
+    query.message.reply_text('Очередь очищена')
 
     for teacher in TEACHERS:
         send_queue_updates(teacher)
@@ -194,6 +204,9 @@ def callback_reg_student(update, context):
     text = update.message.text.replace('Студент: ', '')
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
     
+    if not isRealUser(update):
+        return
+    
     if collection_users.find_one({'user_id': user_id}) is not None:
         return
 
@@ -213,7 +226,14 @@ def callback_join_queue(update, context):
 
     query = update.callback_query
     user_id = update.message.chat.id
+    
+    if not isRealUser(update):
+        return
+    
     user = collection_users.find_one({'user_id': user_id})
+    
+    if user is None:
+        return
 
     hw = update.message.text.replace('ДЗ: ', '')
     
@@ -227,9 +247,9 @@ def callback_join_queue(update, context):
                                                    'problem': hw})
     
     if already_in_queue is not None:
-        bot.send_message(chat_id=user_id, text='Вы уже в очереди!')
+        bot.send_message(chat_id=user_id, text='Вы уже подали эту задачу!')
     else:
-        update.message.reply_text(f'Текущая задача:\n{hw}\n\nВыберите преподавателя:',
+        update.message.reply_text(f'Выбранная задача:\n{hw}\n\nНапоминаем, что сдавать две задачи подряд одному и тому же преподавателю не разрешается.\n\nВыберите преподавателя:',
                                   reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
 
 
@@ -244,6 +264,15 @@ def callback_teacher_chosen(update, context):
 def callback_revoke(update, context):
     query = update.callback_query
     user_id = update.message.chat.id
+    
+    if not isRealUser(update):
+        return    
+    
+    user = collection_users.find_one({'user_id': user_id})
+    
+    if user is None:
+        return
+    
     problem = update.message.text.replace('Отозвать: ', '')
 
     t = collection_queues.find_one({'user_id': user_id, 'problem': problem})
@@ -374,7 +403,7 @@ if __name__ == '__main__':
     updater = Updater(TELEGRAMTOKEN, use_context=True)
 
     # debug purposes
-    # queues.delete_many({})
+    # collection_queues.delete_many({})
 
     # Get the dispatcher to register handlers
     dp = updater.dispatcher
