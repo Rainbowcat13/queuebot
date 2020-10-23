@@ -14,19 +14,21 @@ from start import update_homeworks
 from bot_model import TELEGRAMTOKEN, TEACHERS, collection_users, collection_students, collection_homeworks, \
     collection_admins, collection_queues, collection_chats_with_broadcast, collection_settings
 
-START_KEYBOARD = [[InlineKeyboardButton('Встать в очередь',
+START_KEYBOARD = [[InlineKeyboardButton('Обновить',
+                                        callback_data='callback_refresh_statictics')],
+                  [InlineKeyboardButton('Встать в очередь',
                                         switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
                   [InlineKeyboardButton('Отозвать заявку',
                                         switch_inline_query_current_chat='Начните писать название заявки: ')]
                   ]
 
+# PRACTICE_DEADLINE = 920 # 15:20
 
 def callback_start(update, context):
     user_id = update.message.chat.id
     
     if not is_real_user(update):
         return
-
     login_keyboard = [[InlineKeyboardButton('Ввести данные',
                                             switch_inline_query_current_chat='Начните писать фамилию: ')]]
 
@@ -40,7 +42,17 @@ def callback_start(update, context):
 
 def getElapsedTime():
     t = math.ceil((collection_settings.find_one()['ending'] - time()) / 60)
-    return t if t >= 0 else 0
+    t = t if t >= 0 else 0
+    d = [' минут', ' минуты', ' минута']
+    
+    if t % 10 >= 5:
+        t = str(t) + d[0]
+    elif t % 10 >= 2:
+        t = str(t) + d[1]
+    else:
+        t = str(t) + d[2]
+        
+    return t
 
 
 def is_real_user(update):
@@ -48,10 +60,15 @@ def is_real_user(update):
 
 
 def show_status(user_id):
+    bot.send_message(chat_id=user_id, text=getStatus(user_id),
+                     reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))    
+
+
+def getStatus(user_id):
     user_in_queues = collection_queues.find({'user_id': user_id})
 
     shortName = ' '.join(collection_users.find_one({'user_id': user_id})['name'].split()[:2])
-    text = f'Студент: {shortName}\nВремя до конца практики: {getElapsedTime()} минут\n\n'
+    text = f'Студент: {shortName}\nВремя до конца практики: {getElapsedTime()}\n\n'
 
     if not user_in_queues.count():
         text += 'У Вас нет активных заявок'
@@ -61,9 +78,21 @@ def show_status(user_id):
             shortTeacherName = ''.join(map(lambda x: x[0], u["teacher"].split()[1::-1]))
             text += f'{u["problem"]} — {u["place"]} место ({shortTeacherName})\n'
 
-    bot.send_message(chat_id=user_id, text=text,
-                     reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
+    return text
 
+
+def callback_refresh_statictics(update, context):
+    query = update.callback_query
+    user_id = query.message.chat.id
+    message_id = query.message.message_id
+    newStatus = getStatus(user_id).strip()
+    
+    if query.message.text != newStatus:
+        bot.edit_message_text(chat_id=user_id, message_id=message_id,text=newStatus,
+                              reply_markup=InlineKeyboardMarkup(START_KEYBOARD, resize_keyboard=True))
+    
+    query.answer('Обновлено!')
+    
 
 def callback_logout(update, context):
     user_id = update.message.chat.id
@@ -382,6 +411,24 @@ def send_messages_to_top_queue(entries):
             bot.send_message(chat_id=entry['user_id'], text=tmp + 'Приготовьтесь!')
 
 
+# def callback_set_practice_deadline(update, context):
+#     user_id = update.message.chat.id
+#     text = update.message.text
+#
+#     if not is_real_user(update):
+#         return
+#
+#     if collection_admins.find_one({'user_id': user_id}) is None:
+#         update.message.reply_text('У вас недостаточно прав для этого действия')
+#         return
+#
+#     t = text.replace('/set_practice_deadline ', '')
+#
+#     if len(t) == 5 and t[:2].isdigit() and t[3:].isdigit() and t[2] == ':':
+#         PRACTICE_DEADLINE = int(t[:2]) * 60 + int(t[3:])
+#     else:
+#         bot.send_message(chat_id=user_id,text=f'Ошибка')
+
 if __name__ == '__main__':
     update_homeworks()
 
@@ -403,6 +450,7 @@ if __name__ == '__main__':
     dp.add_handler(CommandHandler("admin", callback_admin))
     dp.add_handler(CommandHandler("start_broadcast_table", callback_start_broadcast_table))
     dp.add_handler(CommandHandler("stop_broadcast_table", callback_stop_broadcast_table))
+    # dp.add_handler(CommandHandler("set_practice_deadline", callback_set_practice_deadline))
 
     # on callbacks
     dp.add_handler(CallbackQueryHandler(callback=callback_add, pattern='^add$'))
@@ -410,6 +458,7 @@ if __name__ == '__main__':
     dp.add_handler(CallbackQueryHandler(callback=callback_teacher_chosen, pattern='^teacher_chosen.*$'))
     dp.add_handler(CallbackQueryHandler(callback=callback_admin_clear_queue, pattern='^admin_clear_queue$'))
     dp.add_handler(CallbackQueryHandler(callback=callback_admin_moderate_queue, pattern='^admin_moderate_queue.*$'))
+    dp.add_handler(CallbackQueryHandler(callback=callback_refresh_statictics, pattern='^callback_refresh_statictics$'))
 
     # messages and inline
     dp.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), callback_reg_student))
