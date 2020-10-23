@@ -11,7 +11,7 @@ python start.py
 
 + ```config/token``` - telegram bot token
 + ```config/mongodb``` - mongoDB url
-+ ```config/students_1``` - list of students 
++ ```config/students``` - list of students 
 
 ### Run
 

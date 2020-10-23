@@ -4,7 +4,7 @@ import requests
 from bs4 import BeautifulSoup
 
 MONGODB_CLIENT: str = open("config/mongo", "r").read()
-STUDENTLISTFILE: str = "config/students_1"
+STUDENTLISTFILE: str = "config/students"
 
 def fill_students_db():
     mongo = pymongo.MongoClient(MONGODB_CLIENT)
