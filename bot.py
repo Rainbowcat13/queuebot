@@ -12,7 +12,7 @@ import re
 
 from start import update_homeworks
 from bot_model import TELEGRAMTOKEN, TEACHERS, collection_users, collection_students, collection_homeworks, \
-    collection_admins, collection_queues, collection_chats_with_broadcast
+    collection_admins, collection_queues, collection_chats_with_broadcast, collection_settings
 
 START_KEYBOARD = [[InlineKeyboardButton('Встать в очередь',
                                         switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
@@ -38,8 +38,8 @@ def callback_start(update, context):
         show_status(user_id)
 
 
-def getElapsedTime():  # todo: return real time
-    t = math.ceil((1603454400 - time()) / 60)
+def getElapsedTime():
+    t = math.ceil((collection_settings.find_one()['ending'] - time()) / 60)
     return t if t >= 0 else 0
 
 
@@ -82,16 +82,17 @@ def callback_add(update, context):
                                                    'teacher': collection_users.find_one({'user_id': user_id})[
                                                        'teacher']})
     
-    if already_in_queue is not None and False: #todo: delete this
+    if already_in_queue is not None:# and False: #t2odo: delete this
         bot.edit_message_text(chat_id=user_id, message_id=message_id,
                           text='Вы уже в очереди!')
         return
 
     collection_queues.insert_one({'user_id': user_id, 'problem': user['problem'],
-                                  'teacher': user['teacher'], 'place': 0,
-                                  'first_time': not user['was_in_queue'], 'insert_time': time()})
-#todo normal not was_in_queue
-    collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': True}})
+                                  'teacher': user['teacher'], 'place': 0, 'insert_time': time(),
+                                  'first_time': user['problem'] not in user['was_in_queue']})
+    if user['problem'] not in user['was_in_queue']:
+        user['was_in_queue'].append(user['problem'])
+    collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': user['was_in_queue']}})
     changed_entries = recalculate_queue(user['teacher'])
     new_place = 0
     for entry in changed_entries:
@@ -116,7 +117,7 @@ def callback_admin_clear_queue(update, context):
         return
     for user in collection_users.find():
         collection_users.find_one_and_update({'user_id': user['user_id']}, {'$set': {'problem': '', 'teacher': '',
-                                                                                     'was_in_queue': False}})
+                                                                                     'was_in_queue': []}})
     collection_queues.delete_many({})
     query.message.reply_text('Очередь очищена')
 
@@ -152,7 +153,7 @@ def callback_inline_query(update, context):
     elif query.startswith('Начните писать номер или название ДЗ: '):
         query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
         for hw in collection_homeworks.find():
-            if query in hw['name'].lower():
+            if query in hw['name'].lower() in [s.lower() for s in collection_settings.find_one()['actual_problems']]:
                 results.append(InlineQueryResultArticle(
                     id=str(uuid4()),
                     title=hw['name'],
@@ -187,7 +188,7 @@ def callback_reg_student(update, context):
         return
     
     collection_users.insert_one({'user_id': user_id, 'name': name, 'group': group,
-                                 'problem': '', 'teacher': '', 'was_in_queue': False})
+                                 'problem': '', 'teacher': '', 'was_in_queue': []})
     callback_start(update, context)
 
 
@@ -215,11 +216,10 @@ def callback_join_queue(update, context):
     
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'problem': hw}})
     
-    already_in_queue = collection_queues.find_one({'user_id': user_id,
-                                                   'problem': hw})
+    already_in_queue = collection_queues.find_one({'user_id': user_id, 'problem': hw})
     
     if already_in_queue is not None:
-        bot.send_message(chat_id=user_id, text='Вы уже подали эту задачу!')
+        bot.send_message(chat_id=user_id, text='Вы уже в очереди на это задание!')
     else:
         update.message.reply_text(f'Выбранная задача:\n{hw}\n\nНапоминаем, что сдавать две задачи подряд одному и тому же преподавателю не разрешается.\n\nВыберите преподавателя:',
                                   reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
@@ -246,7 +246,7 @@ def callback_revoke(update, context):
 
     entry = collection_queues.find_one({'user_id': user_id, 'problem': problem})
     if not entry:
-        bot.send_message(chat_id=user_id, text='Вас нет в очерекди на эту задачу!')
+        bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
         return
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'teacher': entry['teacher'], 'problem': problem}})
     callback_delete(update, context)
@@ -348,6 +348,7 @@ def callback_admin_moderate_queue(update, context):
 
 
 def recalculate_queue(teacher):
+    priority = collection_settings.find_one()['problems_priority']
     old_queue = collection_queues.find({'teacher': teacher})
     if old_queue:
         old_places = {}
@@ -356,6 +357,7 @@ def recalculate_queue(teacher):
         old_queue = list(old_queue)
         old_queue.sort(key=lambda x: (
             0 if 'first_time' not in x else (0 if x['first_time'] else 1),
+            0 if x['problem'] not in priority else priority[x['problem']],
             0 if 'insert_time' not in x else x['insert_time']))
         for el in old_queue:
             old_places[el['_id']] = el['place']
