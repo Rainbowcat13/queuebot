@@ -63,13 +63,16 @@ def callback_logout(update, context):
 def callback_add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
+    message_id = query.message.message_id
     user = collection_users.find_one({'user_id': user_id})
 
     already_in_queue = collection_queues.find_one({'user_id': user_id,
                                                    'teacher': collection_users.find_one({'user_id': user_id})[
                                                        'teacher']})
+    
     if already_in_queue is not None:
-        query.answer('Вы уже в очереди!')
+        bot.edit_message_text(chat_id=user_id, message_id=message_id,
+                          text='Вы уже в очереди!')
         return
 
     new_place = collection_queues.find({'teacher': user['teacher'],
@@ -92,9 +95,7 @@ def callback_add(update, context):
                                   'first_time': not user['was_in_queue']})
 
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'was_in_queue': True}})
-
-    query = update.callback_query
-    message_id = query.message.message_id
+    
     bot.edit_message_text(chat_id=user_id, message_id=message_id,
                           text=f'Заявка создана!\nВаше место в очереди - {new_place}\n\nЗадача:\n{user["problem"]}\n\nПреподаватель:\n{user["teacher"]}')
 
@@ -190,8 +191,14 @@ def callback_reg_student(update, context):
     user_id = update.message.chat.id
     text = update.message.text.replace('Студент: ', '')
     name, group = ' '.join(text.split()[:-1]), text.split()[-1]
+    
     if collection_users.find_one({'user_id': user_id}) is not None:
         return
+
+    if not collection_students.find_one({'name': name}):
+        bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе пользователя')
+        return
+    
     collection_users.insert_one({'user_id': user_id, 'name': name, 'group': group,
                                  'problem': '', 'teacher': '', 'was_in_queue': False})
     callback_start(update, context)
@@ -207,10 +214,21 @@ def callback_join_queue(update, context):
     user = collection_users.find_one({'user_id': user_id})
 
     hw = update.message.text.replace('ДЗ: ', '')
+    
+    if not collection_homeworks.find_one({'name':hw}):
+        bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе задачи')
+        return
+    
     collection_users.find_one_and_update({'user_id': user_id}, {'$set': {'problem': hw}})
-
-    update.message.reply_text(f'Текущая задача:\n{hw}\n\nВыберите преподавателя:',
-                              reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
+    
+    already_in_queue = collection_queues.find_one({'user_id': user_id,
+                                                   'problem': hw})
+    
+    if already_in_queue is not None:
+        bot.send_message(chat_id=user_id, text='Вы уже в очереди!')
+    else:
+        update.message.reply_text(f'Текущая задача:\n{hw}\n\nВыберите преподавателя:',
+                                  reply_markup=InlineKeyboardMarkup(keyboard1, resize_keyboard=True))
 
 
 def callback_teacher_chosen(update, context):
