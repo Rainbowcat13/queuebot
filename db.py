@@ -54,17 +54,17 @@ class DBConnector:
         :return: Literally nothing
         """
         size = 0
-        for key, value in params:
+        for key, value in params.items():
             size = len(value)
             break
         if size == 0:
             return
         for i in range(size):
-            self.add_one(collection_name, {key: value[i] for key, value in params})
+            self.add_one(collection_name, {key: value[i] for key, value in params.items()})
 
     def get_all(self, collection_name):
         return self[collection_name].find()
 
     def __getitem__(self, collection_name):
         if collection_name in self.collections:
-            return self.collections['collection_name']
+            return self.collections[collection_name]
