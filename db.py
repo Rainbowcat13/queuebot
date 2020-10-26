@@ -18,7 +18,7 @@ class DBConnector:
         }
 
     def aggregate_one(self, collection_name: str, parameters: Dict,
-                      update: Dict=None, delete=False):
+                      update: Dict = None, delete=False):
         collection = self[collection_name]
         if update is not None:
             return collection.find_one_and_update(parameters, {'$set': update})
@@ -27,8 +27,8 @@ class DBConnector:
             collection.delete_one(parameters)
         return result
 
-    def aggregate_many(self, collection_name: str, parameters: Dict=None,
-                       update: Dict=None, delete=False):
+    def aggregate_many(self, collection_name: str, parameters: Dict = None,
+                       update: Dict = None, delete=False):
         if parameters is None:
             parameters = {}
         collection = self[collection_name]
@@ -61,6 +61,9 @@ class DBConnector:
             return
         for i in range(size):
             self.add_one(collection_name, {key: value[i] for key, value in params})
+
+    def get_all(self, collection_name):
+        return self[collection_name].find()
 
     def __getitem__(self, collection_name):
         if collection_name in self.collections:
