@@ -174,6 +174,7 @@ def callback_start(update, context):
 
 
 def callback_refresh_statistics(update, context):
+    print('HUY')
     query = update.callback_query
     user_id = query.message.chat.id
     message_id = query.message.message_id
@@ -268,12 +269,17 @@ def callback_inline_query(update, context):  # NOT REFACTORED
     query: str = update.inline_query.query
     cache_time = 300
     is_personal = False
+    print(query, 'HUY3')
     if query.startswith('Начните писать фамилию: '):
         query = query.replace('Начните писать фамилию: ', '')
         regex = re.compile(re.escape(query), re.IGNORECASE)
 
+        a = db.aggregate_many('students', {'name': {'$regex': regex}})
+        print(a, 'HUY2')
+
         for student in db.aggregate_many('students', {'name': {'$regex': regex}}):
             s = f"{student['name']} {student['group']}"
+            print(s)
             results.append(InlineQueryResultArticle(
                 id=str(uuid4()),
                 title=s,

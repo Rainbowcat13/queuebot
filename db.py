@@ -22,23 +22,24 @@ class DBConnector:
         collection = self[collection_name]
         if update is not None:
             return collection.find_one_and_update(parameters, {'$set': update})
-        result = collection.find_one(parameters)
-        if delete is not None:
+        if delete:
             collection.delete_one(parameters)
-        return result
+            return
+        return collection.find_one(parameters)
 
     def aggregate_many(self, collection_name: str, parameters: Dict = None,
                        update: Dict = None, delete=False):
         if parameters is None:
             parameters = {}
+        # print([x for x in self.collections['students'].find(parameters)])
         collection = self[collection_name]
         if update is not None:
             for item in collection.find(parameters):
-                yield collection.find_one_and_update(item, update)
-        result = collection.find(parameters)
+                collection.find_one_and_update(item, update)
+            return
         if delete:
             collection.delete_many(parameters)
-        return result
+        return collection.find(parameters)
 
     def add_one(self, collection_name: str, fields: Dict):
         if self.aggregate_one(collection_name, fields) is None:
