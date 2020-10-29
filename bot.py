@@ -3,6 +3,7 @@ import re
 from time import strftime
 from uuid import uuid4
 
+from telegram.error import TimedOut
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
     InputTextMessageContent, ParseMode
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, InlineQueryHandler, CallbackQueryHandler
@@ -50,7 +51,7 @@ class QueueBot:
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_teacher_chosen,
                                                          pattern='^teacher_chosen.*$'))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_refresh_statistics,
-                                                         pattern='^self.callback_refresh_statistics$'))
+                                                         pattern='^callback_refresh_statistics$'))
 
         #     callbacks from admin panel
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_admin_clear_queue,
@@ -125,18 +126,19 @@ class QueueBot:
             text += 'Время обновления: ' + strftime("%H:%M:%S")
             for chat in db['chats_with_broadcast'].find():
                 messages_ids = chat['messages_id']
-                try:
-                    if teacher not in messages_ids:
-                        msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
-                                                        text=text)
-                        messages_ids[teacher] = msg['message_id']
-                        db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
-                                         {'$set': {'messages_id': messages_ids}})
-                    else:
-                        queuebot.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
-                                                       parse_mode=ParseMode.MARKDOWN, text=text)
-                except:
-                    print(f'Can not send queue updates in chat {chat}')
+                # try:
+                print(messages_ids)
+                if teacher not in messages_ids:
+                    msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
+                                                    text=text)
+                    messages_ids[teacher] = msg['message_id']
+                    db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
+                                     update={'messages_id': messages_ids})
+                else:
+                    queuebot.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
+                                                   parse_mode=ParseMode.MARKDOWN, text=text)
+                # except:
+                #     print(f'Can not send queue updates in chat {chat}')
 
     def send_messages_to_top_queue(self, entries):
         for entry in entries:
@@ -174,7 +176,6 @@ def callback_start(update, context):
 
 
 def callback_refresh_statistics(update, context):
-    print('HUY')
     query = update.callback_query
     user_id = query.message.chat.id
     message_id = query.message.message_id
@@ -269,17 +270,11 @@ def callback_inline_query(update, context):  # NOT REFACTORED
     query: str = update.inline_query.query
     cache_time = 300
     is_personal = False
-    print(query, 'HUY3')
     if query.startswith('Начните писать фамилию: '):
         query = query.replace('Начните писать фамилию: ', '')
         regex = re.compile(re.escape(query), re.IGNORECASE)
-
-        a = db.aggregate_many('students', {'name': {'$regex': regex}})
-        print(a, 'HUY2')
-
         for student in db.aggregate_many('students', {'name': {'$regex': regex}}):
             s = f"{student['name']} {student['group']}"
-            print(s)
             results.append(InlineQueryResultArticle(
                 id=str(uuid4()),
                 title=s,
@@ -400,6 +395,12 @@ def callback_stop_broadcast_table(update, context):
     chat_id = update.message.chat.id
     if db.aggregate_one('chats_with_broadcast', {'chat_id': chat_id}) is not None:
         db.aggregate_one('chats_with_broadcast', {'chat_id': chat_id}, delete=True)
+    try:
+        queuebot.bot.send_message(text='Трансляция остановлена.', chat_id=chat_id)
+    except TimedOut:
+        print('Timed out exception occured while stopping broadcast.'
+              ' Just no message but everything else is fine')
+
 
 
 def callback_admin(update, context):
@@ -455,7 +456,7 @@ def callback_admin_moderate_queue(update, context):  # NOT REFACTORED
             queuebot.send_queue_updates(teacher)
             query.edit_message_text(text=f'Пользователь удален')
         else:
-            queuebot.bot.send_message(text=f'Выбранный пользватель не найден')
+            queuebot.bot.send_message(text=f'Выбранный пользователь не найден')
 
 
 if __name__ == '__main__':
