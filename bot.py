@@ -35,14 +35,14 @@ class QueueBot:
     def _register_handlers(self):
         # command handlers
         #     commands for all users
-        self.dispatcher.add_handler(CommandHandler("start", callback_start))
-        self.dispatcher.add_handler(CommandHandler("restart", callback_start))
-        self.dispatcher.add_handler(CommandHandler("logout", callback_logout))
+        self.dispatcher.add_handler(CommandHandler('start', callback_start))
+        self.dispatcher.add_handler(CommandHandler('restart', callback_start))
+        self.dispatcher.add_handler(CommandHandler('logout', callback_logout))
 
         #     commands for admins
-        self.dispatcher.add_handler(CommandHandler("admin", callback_admin))
-        self.dispatcher.add_handler(CommandHandler("start_broadcast_table", callback_start_broadcast_table))
-        self.dispatcher.add_handler(CommandHandler("stop_broadcast_table", callback_stop_broadcast_table))
+        self.dispatcher.add_handler(CommandHandler('admin', callback_admin))
+        self.dispatcher.add_handler(CommandHandler('start_broadcast_table', callback_start_broadcast_table))
+        self.dispatcher.add_handler(CommandHandler('stop_broadcast_table', callback_stop_broadcast_table))
 
         # callback handlers
         #     usual callbacks
@@ -82,8 +82,8 @@ class QueueBot:
         else:
             text += 'Активные заявки:\n'
             for u in user_in_queues:
-                short_teacher_name = ''.join(map(lambda x: x[0], u["teacher"].split()[1::-1]))
-                text += f'{u["problem"]} — {u["place"]} место ({short_teacher_name})\n'
+                short_teacher_name = ''.join(map(lambda x: x[0], u['teacher'].split()[1::-1]))
+                text += f'    {u["problem"]} — {u["place"]} место ({short_teacher_name})\n'
         return text
 
     def recalculate_queue(self, teacher):  # NOT REFACTORED
@@ -123,22 +123,22 @@ class QueueBot:
                 text += str(st['place']) + ': ' + user_name + '\n'
             if free_queue:
                 text += '_в очереди никого нет_\n'
-            text += 'Время обновления: ' + strftime("%H:%M:%S")
+            text += 'Время обновления: ' + strftime('%H:%M:%S')
             for chat in db['chats_with_broadcast'].find():
                 messages_ids = chat['messages_id']
-                # try:
-                print(messages_ids)
-                if teacher not in messages_ids:
-                    msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
-                                                    text=text)
-                    messages_ids[teacher] = msg['message_id']
-                    db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
-                                     update={'messages_id': messages_ids})
-                else:
-                    queuebot.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
-                                                   parse_mode=ParseMode.MARKDOWN, text=text)
-                # except:
-                #     print(f'Can not send queue updates in chat {chat}')
+                try:
+                    print(messages_ids)
+                    if teacher not in messages_ids:
+                        msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
+                                                        text=text)
+                        messages_ids[teacher] = msg['message_id']
+                        db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
+                                         update={'messages_id': messages_ids})
+                    else:
+                        queuebot.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
+                                                       parse_mode=ParseMode.MARKDOWN, text=text)
+                except:
+                    print(f'Can not send queue updates in chat {chat}')
 
     def send_messages_to_top_queue(self, entries):
         for entry in entries:
@@ -154,7 +154,7 @@ class QueueBot:
         self._register_handlers()
 
         self.updater.start_polling()
-        print("Start polling")
+        print('Start polling')
 
         self.updater.idle()
 
@@ -274,11 +274,11 @@ def callback_inline_query(update, context):  # NOT REFACTORED
         query = query.replace('Начните писать фамилию: ', '')
         regex = re.compile(re.escape(query), re.IGNORECASE)
         for student in db.aggregate_many('students', {'name': {'$regex': regex}}):
-            s = f"{student['name']} {student['group']}"
+            s = f'{student["name"]} {student["group"]}'
             results.append(InlineQueryResultArticle(
                 id=str(uuid4()),
                 title=s,
-                input_message_content=InputTextMessageContent("Студент: " + s)))
+                input_message_content=InputTextMessageContent('Студент: ' + s)))
     elif query.startswith('Начните писать номер или название ДЗ: '):
         query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
         for hw in db['homeworks'].find():
@@ -286,7 +286,7 @@ def callback_inline_query(update, context):  # NOT REFACTORED
                 results.append(InlineQueryResultArticle(
                     id=str(uuid4()),
                     title=hw['name'],
-                    input_message_content=InputTextMessageContent("ДЗ: " + hw['name'])))
+                    input_message_content=InputTextMessageContent('ДЗ: ' + hw['name'])))
     elif query.startswith('Начните писать название заявки: '):
         query = query.replace('Начните писать название заявки: ', '').lower()
         user_id = update.inline_query.from_user.id
@@ -297,7 +297,7 @@ def callback_inline_query(update, context):  # NOT REFACTORED
                 results.append(InlineQueryResultArticle(
                     id=str(uuid4()),
                     title=request['problem'],
-                    input_message_content=InputTextMessageContent("Отозвать: " + request['problem'])))
+                    input_message_content=InputTextMessageContent('Отозвать: ' + request['problem'])))
     update.inline_query.answer(results[:20], cache_time=cache_time, is_personal=is_personal)
 
 
