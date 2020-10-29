@@ -6,7 +6,7 @@ from uuid import uuid4
 from telegram.error import TimedOut
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
     InputTextMessageContent, ParseMode
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, InlineQueryHandler, CallbackQueryHandler
+from telegram.ext import Updater, CommandHandler, InlineQueryHandler, CallbackQueryHandler
 
 from db import DBConnector
 from lesson_settings import *
@@ -18,9 +18,9 @@ class QueueBot:
     START_KEYBOARD = [[InlineKeyboardButton('Обновить',
                                             callback_data='callback_refresh_statistics')],
                       [InlineKeyboardButton('Встать в очередь',
-                                            switch_inline_query_current_chat='Начните писать номер или название ДЗ: ')],
-                      [InlineKeyboardButton('Отозвать заявку',
-                                            switch_inline_query_current_chat='Начните писать название заявки: ')]
+                                            switch_inline_query_current_chat='/add ')],
+                      [InlineKeyboardButton('Отозвать задачу',
+                                            switch_inline_query_current_chat='/done ')]
                       ]
 
     def __init__(self):
@@ -38,6 +38,9 @@ class QueueBot:
         self.dispatcher.add_handler(CommandHandler('start', callback_start))
         self.dispatcher.add_handler(CommandHandler('restart', callback_start))
         self.dispatcher.add_handler(CommandHandler('logout', callback_logout))
+        self.dispatcher.add_handler(CommandHandler('login', callback_login, pass_args=True))
+        self.dispatcher.add_handler(CommandHandler('add', callback_join_queue, pass_args=True))
+        self.dispatcher.add_handler(CommandHandler('done', callback_done, pass_args=True))
 
         #     commands for admins
         self.dispatcher.add_handler(CommandHandler('admin', callback_admin))
@@ -58,10 +61,6 @@ class QueueBot:
                                                          pattern='^admin_clear_queue$'))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_admin_moderate_queue,
                                                          pattern='^admin_moderate_queue.*$'))
-        # message handlers
-        self.dispatcher.add_handler(MessageHandler(Filters.regex('^Студент: .*$'), callback_reg_student))
-        self.dispatcher.add_handler(MessageHandler(Filters.regex('^ДЗ: .*$'), callback_join_queue))
-        self.dispatcher.add_handler(MessageHandler(Filters.regex('^Отозвать: .*$'), callback_revoke))
 
         # inline handlers !INLINE QUERIES MUST BE ENABLED FOR YOUR BOT!
         # (you can enable them in https://t.me/BotFather by /setinline command)
@@ -151,6 +150,9 @@ class QueueBot:
     def run(self):
         self._set_admins()
         self._register_handlers()
+
+        # remove requests from queues with non-actual problems
+        # because students couldn't do it by themselves (because we have some stupid code)
 
         self.updater.start_polling()
         print('Start polling')
@@ -267,9 +269,14 @@ def callback_delete(update, context):
 def callback_inline_query(update, context):  # NOT REFACTORED
     results = []
     query: str = update.inline_query.query
-    cache_time = 300
-    is_personal = False
+    cache_time = 0
+    is_personal = True
+    user_id = update.inline_query.from_user.id
+    is_auth = (db.aggregate_one('users', {'user_id': user_id}) is not None)  # todo: cache is_auth
+
     if query.startswith('Начните писать фамилию: '):
+        is_personal = False
+        cache_time = 300
         query = query.replace('Начните писать фамилию: ', '')
         regex = re.compile(re.escape(query), re.IGNORECASE)
         for student in db.aggregate_many('students', {'name': {'$regex': regex}}):
@@ -277,36 +284,39 @@ def callback_inline_query(update, context):  # NOT REFACTORED
             results.append(InlineQueryResultArticle(
                 id=str(uuid4()),
                 title=s,
-                input_message_content=InputTextMessageContent('Студент: ' + s)))
-    elif query.startswith('Начните писать номер или название ДЗ: '):
-        query = query.replace('Начните писать номер или название ДЗ: ', '').lower()
-        for hw in db['homeworks'].find():
-            if query in hw['name'].lower() in [s.lower() for s in lesson_settings['actual_problems']]:
+                input_message_content=InputTextMessageContent('/login ' + s)))
+    elif is_auth and query.startswith('/add'):
+        tasks = db.aggregate_many('queues', {'user_id': user_id})
+        requested_tasks = []
+
+        if tasks is not None:
+            for i in tasks:
+                requested_tasks.append(i['problem'])
+
+        for hw in lesson_settings['actual_problems']:
+            if hw not in requested_tasks:
                 results.append(InlineQueryResultArticle(
                     id=str(uuid4()),
-                    title=hw['name'],
-                    input_message_content=InputTextMessageContent('ДЗ: ' + hw['name'])))
-    elif query.startswith('Начните писать название заявки: '):
-        query = query.replace('Начните писать название заявки: ', '').lower()
-        user_id = update.inline_query.from_user.id
-        is_personal = True
+                    title=hw,
+                    input_message_content=InputTextMessageContent('/add ' + str(get_homework_id(hw)))))
+    elif is_auth and query.startswith('/done'):
         cache_time = 0
         for request in db.aggregate_many('queues', {'user_id': user_id}):
-            if query in request['problem'].lower():
-                results.append(InlineQueryResultArticle(
-                    id=str(uuid4()),
-                    title=request['problem'],
-                    input_message_content=InputTextMessageContent('Отозвать: ' + request['problem'])))
+            results.append(InlineQueryResultArticle(
+                id=str(uuid4()),
+                title=request['problem'],
+                input_message_content=InputTextMessageContent('/done ' + str(get_homework_id(request['problem'])))))
     update.inline_query.answer(results[:20], cache_time=cache_time, is_personal=is_personal)
 
 
-def callback_reg_student(update, context):  # NOT REFACTORED
+def callback_login(update, context):  # NOT REFACTORED
     user_id = update.message.chat.id
-    text = update.message.text.replace('Студент: ', '')
-    name, group = ' '.join(text.split()[:-1]), text.split()[-1]
 
-    if not real_user(update):
+    if not real_user(update) or len(context.args) == 0:
         return
+
+    text = ' '.join(context.args)
+    name, group = ' '.join(text.split()[:-1]), text.split()[-1]
 
     if db.aggregate_one('users', {'user_id': user_id}) is not None:
         return
@@ -315,16 +325,20 @@ def callback_reg_student(update, context):  # NOT REFACTORED
         queuebot.bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе пользователя')
         return
 
+    # we don't allow somebody to login to account twice
+    # except admins :)
+
+    if db.aggregate_one('users', {'name': name}) is not None and \
+            db.aggregate_one('admins', {'user_id': user_id}) is None:
+        queuebot.bot.send_message(chat_id=user_id, text='Этот аккаунт уже занят')
+        return
+
     db.add_one('users', {'user_id': user_id, 'name': name, 'group': group,
                          'problem': '', 'teacher': '', 'was_in_queue': []})
     callback_start(update, context)
 
 
 def callback_join_queue(update, context):  # NOT REFACTORED
-    keyboard1 = [[InlineKeyboardButton('Георгий Корнеев', callback_data='teacher_chosen0')],
-                 [InlineKeyboardButton('Юлия Савон', callback_data='teacher_chosen1')],
-                 [InlineKeyboardButton('Андрей Плотников', callback_data='teacher_chosen2')]]
-
     user_id = update.message.chat.id
 
     if not real_user(update):
@@ -335,19 +349,45 @@ def callback_join_queue(update, context):  # NOT REFACTORED
     if user is None:
         return
 
-    hw = update.message.text.replace('ДЗ: ', '')
+    if len(context.args) == 0 or not context.args[0].isdigit():
+        queuebot.bot.send_message(chat_id=user_id, text='/add {номер задачи}')
+        return
+
+    hw_id = int(context.args[0])
+    hw = get_homework_title_by_id(hw_id)
+
+    # print(hw_id, hw)
+
+    if hw is None:
+        queuebot.bot.send_message(chat_id=user_id, text='Выбранная задача неактуальна')
+        return
 
     if db.aggregate_one('homeworks', {'name': hw}) is None:
         queuebot.bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе задачи')
         return
 
     db.aggregate_one('users', {'user_id': user_id}, update={'problem': hw})
+    busy_teachers = db.aggregate_many('queues', {'user_id': user_id})
+    free_teachers = [0, 1, 2]
 
-    already_in_queue = db.aggregate_one('queues', {'user_id': user_id, 'problem': hw})
+    already_in_queue = False
+    keyboard1 = []
 
-    if already_in_queue is not None:
+    if busy_teachers is not None:
+        for i in busy_teachers:
+            free_teachers.remove(TEACHERS.index(i['teacher']))
+            if i['problem'] == hw:
+                already_in_queue = True
+
+    if already_in_queue:
         queuebot.bot.send_message(chat_id=user_id, text='Вы уже в очереди на это задание!')
+    elif len(free_teachers) == 0:
+        queuebot.bot.send_message(chat_id=user_id, text='Для Вас нет свободных преподавателей')
     else:
+        for i in free_teachers:
+            keyboard1.append([
+                InlineKeyboardButton(' '.join(TEACHERS[i].split()[1::-1]), callback_data='teacher_chosen' + str(i))])
+
         update.message.reply_text(
             f'Выбранная задача:\n{hw}\n\nНапоминаем, что сдавать две задачи подряд одному и '
             'тому же преподавателю не разрешается.\n\nВыберите преподавателя:',
@@ -362,22 +402,32 @@ def callback_teacher_chosen(update, context):
     callback_add(update, context)
 
 
-def callback_revoke(update, context):  # NOT REFACTORED
+def callback_done(update, context):  # NOT REFACTORED
     if not real_user(update):
         return
     user_id = update.message.chat.id
     user = db.aggregate_one('users', {'user_id': user_id})
+
     if user is None:
         return
 
-    problem = update.message.text.replace('Отозвать: ', '')
+    if len(context.args) == 0 or not context.args[0].isdigit():
+        queuebot.bot.send_message(chat_id=user_id, text='/done {номер задачи}')
+        return
 
-    entry = db.aggregate_one('queues', {'user_id': user_id, 'problem': problem})
+    hw_id = int(context.args[0])
+    hw = get_homework_title_by_id(hw_id)
+
+    if hw is None:  # see QueueBot.run()
+        queuebot.bot.send_message(chat_id=user_id, text='Выбранная задача неактуальна')
+        return
+
+    entry = db.aggregate_one('queues', {'user_id': user_id, 'problem': hw})
     if entry is None:
         queuebot.bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
         return
     db.aggregate_one('users', {'user_id': user_id},
-                     update={'teacher': entry['teacher'], 'problem': problem})
+                     update={'teacher': entry['teacher'], 'problem': hw})
     callback_delete(update, context)
     queuebot.show_status(user_id)
 
@@ -397,7 +447,7 @@ def callback_stop_broadcast_table(update, context):
     try:
         queuebot.bot.send_message(text='Трансляция остановлена.', chat_id=chat_id)
     except TimedOut:
-        print('Timed out exception occured while stopping broadcast.'
+        print('Timed out exception occurred while stopping broadcast.'
               ' Just no message but everything else is fine')
 
 
