@@ -127,7 +127,6 @@ class QueueBot:
             for chat in db['chats_with_broadcast'].find():
                 messages_ids = chat['messages_id']
                 try:
-                    print(messages_ids)
                     if teacher not in messages_ids:
                         msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
                                                         text=text)
@@ -447,7 +446,6 @@ def callback_admin_moderate_queue(update, context):  # NOT REFACTORED
         head_queue = db.aggregate_one('queues',
                                       {'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])})
         if head_queue:
-            print(head_queue)
             teacher = head_queue['teacher']
             db.aggregate_many('queues',
                               {'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])},
