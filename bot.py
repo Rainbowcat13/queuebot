@@ -83,7 +83,7 @@ class QueueBot:
             text += 'Активные заявки:\n'
             for u in user_in_queues:
                 short_teacher_name = ''.join(map(lambda x: x[0], u['teacher'].split()[1::-1]))
-                text += f'    {u["problem"]} — {u["place"]} место ({short_teacher_name})\n'
+                text += f'* {u["problem"]} — {u["place"]} место ({short_teacher_name})\n'
         return text
 
     def recalculate_queue(self, teacher):  # NOT REFACTORED
