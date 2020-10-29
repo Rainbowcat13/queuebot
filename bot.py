@@ -71,13 +71,13 @@ class QueueBot:
         self.bot.send_message(chat_id=user_id, text=self.get_status(user_id),
                               reply_markup=InlineKeyboardMarkup(QueueBot.START_KEYBOARD, resize_keyboard=True))
 
-    def get_status(self, user_id):  # NOT REFACTORED
+    def get_status(self, user_id):
         user_in_queues = self.db.aggregate_many('queues', {'user_id': user_id})
 
         short_name = ' '.join(db.aggregate_one('users', {'user_id': user_id})['name'].split()[:2])
         text = f'Студент: {short_name}\nВремя до конца практики: {get_elapsed_time()}\n\n'
 
-        if not user_in_queues.count():
+        if user_in_queues is None or not user_in_queues.count():
             text += 'У Вас нет активных заявок'
         else:
             text += 'Активные заявки:\n'

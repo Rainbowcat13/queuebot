@@ -1,5 +1,3 @@
-import pymongo
-from pymongo.collection import Collection
 import requests
 from bs4 import BeautifulSoup
 
