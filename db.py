@@ -50,7 +50,7 @@ class DBConnector:
         collection = self[collection_name]
         if update is not None:
             for item in collection.find(parameters):
-                collection.find_one_and_update(item, update)
+                collection.find_one_and_update(item, {'$set': update})
             return
         if delete:
             collection.delete_many(parameters)
