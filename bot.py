@@ -113,13 +113,13 @@ class QueueBot:
 
     def send_queue_updates(self, teacher):  # NOT REFACTORED
         if teacher in TEACHERS:
-            db['queues'].create_index('place')
-            full_queue = db.aggregate_many('queues', {'teacher': teacher, 'place': {'$gt': 0}}).sort('place')
+            self.db['queues'].create_index('place')
+            full_queue = self.db.aggregate_many('queues', {'teacher': teacher, 'place': {'$gt': 0}}).sort('place')
             text = '*' + teacher + '*\n'
             free_queue = True
             for st in full_queue:
                 free_queue = False
-                user_name = db.aggregate_one('users', {'user_id': st['user_id']})['name']
+                user_name = self.db.aggregate_one('users', {'user_id': st['user_id']})['name']
                 text += str(st['place']) + ': ' + user_name + '\n'
             if free_queue:
                 text += '_в очереди никого нет_\n'
@@ -131,11 +131,11 @@ class QueueBot:
                         msg = queuebot.bot.send_message(chat_id=chat['chat_id'], parse_mode=ParseMode.MARKDOWN_V2,
                                                         text=text)
                         messages_ids[teacher] = msg['message_id']
-                        db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
-                                         update={'messages_id': messages_ids})
+                        self.db.aggregate_one('chats_with_broadcast', {'chat_id': chat['chat_id']},
+                                              update={'messages_id': messages_ids})
                     else:
-                        queuebot.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
-                                                       parse_mode=ParseMode.MARKDOWN, text=text)
+                        self.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
+                                                   parse_mode=ParseMode.MARKDOWN, text=text)
                 except:
                     print(f'Can not send queue updates in chat {chat}')
 
@@ -189,7 +189,7 @@ def callback_refresh_statistics(update, context):
 
 def callback_logout(update, context):
     user_id = update.message.chat.id
-    if db.aggregate_one('users', {'user_id': user_id}):
+    if db.aggregate_one('users', {'user_id': user_id}) is not None:
         db.aggregate_one('users', {'user_id': user_id}, delete=True)
         update.message.reply_text('Деавторизация успешна')
 
@@ -200,7 +200,7 @@ def callback_add(update, context):  # NOT REFACTORED
     message_id = query.message.message_id
     user = db.aggregate_one('users', {'user_id': user_id})
 
-    if time() < lesson_settings['starting'] and not db.aggregate_one('admins', {'user_id': user_id}):
+    if time() < lesson_settings['starting'] and db.aggregate_one('admins', {'user_id': user_id}) is None:
         query.answer('Практика еще не началась!!!')
         return
 
@@ -208,7 +208,7 @@ def callback_add(update, context):  # NOT REFACTORED
                                                    'teacher': db.aggregate_one('users',
                                                                                {'user_id': user_id})['teacher']})
 
-    if already_in_queue is not None:  # and False: #t2odo: delete this
+    if already_in_queue is not None:
         queuebot.bot.edit_message_text(chat_id=user_id, message_id=message_id,
                                        text='Вы уже в очереди!')
         return
@@ -311,7 +311,7 @@ def callback_reg_student(update, context):  # NOT REFACTORED
     if db.aggregate_one('users', {'user_id': user_id}) is not None:
         return
 
-    if not db.aggregate_one('students', {'name': name}):
+    if db.aggregate_one('students', {'name': name}) is None:
         queuebot.bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе пользователя')
         return
 
@@ -337,7 +337,7 @@ def callback_join_queue(update, context):  # NOT REFACTORED
 
     hw = update.message.text.replace('ДЗ: ', '')
 
-    if not db.aggregate_one('homeworks', {'name': hw}):
+    if db.aggregate_one('homeworks', {'name': hw}) is None:
         queuebot.bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе задачи')
         return
 
@@ -373,7 +373,7 @@ def callback_revoke(update, context):  # NOT REFACTORED
     problem = update.message.text.replace('Отозвать: ', '')
 
     entry = db.aggregate_one('queues', {'user_id': user_id, 'problem': problem})
-    if not entry:
+    if entry is None:
         queuebot.bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
         return
     db.aggregate_one('users', {'user_id': user_id},
@@ -399,7 +399,6 @@ def callback_stop_broadcast_table(update, context):
     except TimedOut:
         print('Timed out exception occured while stopping broadcast.'
               ' Just no message but everything else is fine')
-
 
 
 def callback_admin(update, context):
@@ -432,7 +431,7 @@ def callback_admin_moderate_queue(update, context):  # NOT REFACTORED
         teacher = TEACHERS[int(command_info[0])]
         short_teacher_name = ''.join(map(lambda x: x[0], teacher.split()[1::-1]))
         head_queue = db.aggregate_one('queues', {'teacher': teacher, 'place': 1})
-        if head_queue:
+        if head_queue is not None:
             head_queue_name = db.aggregate_one('users', {'user_id': head_queue['user_id']})['name']
             head_queue_problem = head_queue['problem']
             text = f'На первом месте к {short_teacher_name}: {head_queue_name} ' \
@@ -445,7 +444,7 @@ def callback_admin_moderate_queue(update, context):  # NOT REFACTORED
         command_info = command_info.split('_')
         head_queue = db.aggregate_one('queues',
                                       {'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])})
-        if head_queue:
+        if head_queue is not None:
             teacher = head_queue['teacher']
             db.aggregate_many('queues',
                               {'user_id': int(command_info[1]), '_id': bson.objectid.ObjectId(command_info[2])},
