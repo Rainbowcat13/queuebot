@@ -2,6 +2,7 @@ import bson
 import re
 from time import strftime
 from uuid import uuid4
+import logging
 
 from telegram.error import TimedOut
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InlineQueryResultArticle, \
@@ -55,6 +56,7 @@ class QueueBot:
                                                          pattern='^teacher_chosen.*$'))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_refresh_statistics,
                                                          pattern='^callback_refresh_statistics$'))
+        self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_done_button, pattern='^/done.*$'))
 
         #     callbacks from admin panel
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_admin_clear_queue,
@@ -72,8 +74,12 @@ class QueueBot:
 
     def get_status(self, user_id):
         user_in_queues = self.db.aggregate_many('queues', {'user_id': user_id})
+        user = db.aggregate_one('users', {'user_id': user_id})
+        if user is None:
+            logging.info(f'Can not get status for user {user_id}')
+            return ''
 
-        short_name = ' '.join(db.aggregate_one('users', {'user_id': user_id})['name'].split()[:2])
+        short_name = ' '.join(user['name'].split()[:2])
         text = f'Студент: {short_name}\nВремя до конца практики: {get_elapsed_time()}\n\n'
 
         if user_in_queues is None or not user_in_queues.count():
@@ -115,7 +121,7 @@ class QueueBot:
             for st in full_queue:
                 free_queue = False
                 user = self.db.aggregate_one('users', {'user_id': st['user_id']})
-                text += str(st['place']) + '\. ' + user['name'] + ' \(' + str(get_homework_id(st['problem'])) + '\)' '\n'
+                text += str(st['place']) + '\. ' + user['name'] + ' \(ДЗ ' + str(get_homework_id(st['problem'])) + '\)' '\n'
             if free_queue:
                 text += '_в очереди никого нет_\n'
             text += 'Время обновления: ' + strftime('%H:%M:%S')
@@ -139,7 +145,9 @@ class QueueBot:
             tmp = 'Преподаватель: {}\nЗадание: {}\nВаше место в очереди: {}\n'.format(entry['teacher'],
                                                                                       entry['problem'], entry['place'])
             if entry['place'] == 1:
-                self.bot.send_message(chat_id=entry['user_id'], text=tmp + 'Идите сдавать. Удачи!')
+                done_keyboard = [[InlineKeyboardButton('Преподаватель свободен. Иду сдавать!',
+                                         callback_data='/done ' + str(get_homework_id(entry['problem'])))]]
+                self.bot.send_message(chat_id=entry['user_id'], text=tmp + 'Идите сдавать. Удачи!', reply_markup=InlineKeyboardMarkup(done_keyboard, resize_keyboard=True))
             elif entry['place'] <= 3:
                 self.bot.send_message(chat_id=entry['user_id'], text=tmp + 'Приготовьтесь!')
 
@@ -158,6 +166,7 @@ class QueueBot:
 
 def callback_start(update, context):
     user_id = update.message.chat.id
+    logging.info(f'Callback start. User {user_id}')
 
     if not real_user(update):
         return
@@ -176,9 +185,13 @@ def callback_refresh_statistics(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     message_id = query.message.message_id
+    logging.info(f'Callback refresh. User {user_id}, message_id {message_id}')
     new_status = queuebot.get_status(user_id).strip()
 
-    if query.message.text != new_status:
+    if new_status == '':
+        callback_send_request_start(user_id)
+        return
+    elif query.message.text != new_status:
         queuebot.bot.edit_message_text(chat_id=user_id, message_id=message_id, text=new_status,
                                        reply_markup=InlineKeyboardMarkup(queuebot.START_KEYBOARD, resize_keyboard=True))
 
@@ -187,6 +200,7 @@ def callback_refresh_statistics(update, context):
 
 def callback_logout(update, context):
     user_id = update.message.chat.id
+    logging.info(f'Callback logout. User {user_id}')
     if db.aggregate_one('users', {'user_id': user_id}) is not None:
         db.aggregate_one('users', {'user_id': user_id}, delete=True)
         update.message.reply_text('Деавторизация успешна')
@@ -196,10 +210,11 @@ def callback_add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     message_id = query.message.message_id
+    logging.info(f'Callback add. User {user_id}, message_id {message_id}')
     user = db.aggregate_one('users', {'user_id': user_id})
     task_id = get_homework_id(user['problem'])
 
-    has_delay = delays_table.get_delay(user['name'], task_id)
+    # has_delay = delays_table.get_delay(user['name'], task_id)
     has_delay = True  # for testing purposes
 
     priority = prior.calc_prior(user_id, task_id, has_delay, get_elapsed_time())
@@ -207,8 +222,7 @@ def callback_add(update, context):
     db.add_one('queues', {'user_id': user_id, 'problem': user['problem'],
                           'teacher': user['teacher'], 'place': 0, 'prior': priority})
 
-    print("add request:", user_id, task_id, prior.get_penalty(user_id, task_id))
-    print(prior.get_penalties())
+    logging.info("add request: user_id: %s, task_id %s, penalty %s. %s", user_id, task_id, prior.get_penalty(user_id, task_id - 1), prior.get_penalties())
 
     changed_entries = queuebot.recalculate_queue(user['teacher'])
     new_place = 0
@@ -282,6 +296,8 @@ def callback_inline_query(update, context):  # NOT REFACTORED
                 id=str(uuid4()),
                 title=request['problem'],
                 input_message_content=InputTextMessageContent('/done ' + str(get_homework_id(request['problem'])))))
+    elif not is_auth and (query.startswith('/add') or query.startswith('/done')):
+            callback_send_request_start(user_id)
     update.inline_query.answer(results[:20], cache_time=cache_time, is_personal=is_personal)
 
 
@@ -309,6 +325,7 @@ def callback_login(update, context):  # NOT REFACTORED
         queuebot.bot.send_message(chat_id=user_id, text='Этот аккаунт уже занят')
         return
 
+    logging.info(f'Callback login. User {user_id}, {name}')
     db.add_one('users', {'user_id': user_id, 'name': name, 'group': group,
                          'problem': '', 'teacher': ''})
     callback_start(update, context)
@@ -378,6 +395,7 @@ def callback_teacher_chosen(update, context):
     query = update.callback_query
     teacher_name = TEACHERS[int(query.data[-1])]
     user_id = query.message.chat.id
+    logging.info(f'Callback teacher chosen. User {user_id}, message_id {teacher_name}')
     db.aggregate_one('users', {'user_id': user_id}, update={'teacher': teacher_name})
     callback_add(update, context)
 
@@ -407,9 +425,10 @@ def callback_done(update, context):
         queuebot.bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
         return
 
-    prior.incr_penalty(user_id, hw_id - 1)
+    prior.incr_penalty(user_id, hw_id)
     #delays_table.set_delay(user_id, hw_id, True) # For debug purposes
 
+    logging.info(f'Callback done. User_id {user_id}, teacher ' + entry['teacher'])
     db.aggregate_many('queues', {'user_id': user_id, 'problem': hw}, delete=True)
     queuebot.send_messages_to_top_queue(queuebot.recalculate_queue(entry['teacher']))
     queuebot.send_queue_updates(entry['teacher'])
@@ -417,13 +436,51 @@ def callback_done(update, context):
     queuebot.show_status(user_id)
 
 
+def callback_done_button(update, context):  # NOT REFACTORED
+    update = update.callback_query
+    if not real_user(update):
+        return
+    user_id = update.message.chat.id
+    user = db.aggregate_one('users', {'user_id': user_id})
+
+    if user is None:
+        return
+
+    command_info = update.data.split()
+    if len(command_info) < 2 or not command_info[1].isdigit():
+        print("Удалить пользователя из очереди не получается", command_info)
+        return
+
+    hw_id = int(command_info[1])
+    hw = get_homework_title_by_id(hw_id)
+
+    if hw is None:  # see QueueBot.run()
+        queuebot.bot.send_message(chat_id=user_id, text='Выбранная задача неактуальна')
+        return
+
+    entry = db.aggregate_one('queues', {'user_id': user_id, 'problem': hw})
+    if entry is None:
+        queuebot.bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
+        return
+    prior.incr_penalty(user_id, hw_id - 1)
+    #delays_table.set_delay(user_id, hw_id, True) # For debug purposes
+
+    logging.info(f'Callback done. User_id {user_id}, teacher ' + entry['teacher'])
+    db.aggregate_many('queues', {'user_id': user_id, 'problem': hw}, delete=True)
+    queuebot.send_messages_to_top_queue(queuebot.recalculate_queue(entry['teacher']))
+    queuebot.send_queue_updates(entry['teacher'])
+
+    queuebot.bot.delete_message(chat_id=user_id, message_id=update.message.message_id)
+    queuebot.show_status(user_id)
+    update.answer('Удачи ' + u'\u2764')
+
 def callback_start_broadcast_table(update, context):
     chat_id = update.message.chat.id
     if db.aggregate_one('chats_with_broadcast', {'chat_id': chat_id}) is None:
         db.add_one('chats_with_broadcast', {'chat_id': chat_id, 'messages_id': {}})
     for teacher in TEACHERS:
         queuebot.send_queue_updates(teacher)
-
+    logging.info(f'Callback start broadcast. Chat id {chat_id}')
 
 def callback_stop_broadcast_table(update, context):
     chat_id = update.message.chat.id
@@ -434,7 +491,7 @@ def callback_stop_broadcast_table(update, context):
     except TimedOut:
         print('Timed out exception occurred while stopping broadcast.'
               ' Just no message but everything else is fine')
-
+    logging.info(f'Callback stop broadcast. Chat id {chat_id}')
 
 def callback_admin(update, context):
     user_id = update.message.chat.id
@@ -488,10 +545,14 @@ def callback_admin_moderate_queue(update, context):  # NOT REFACTORED
             queuebot.send_queue_updates(teacher)
             query.edit_message_text(text=f'Пользователь удален')
         else:
-            queuebot.bot.send_message(text=f'Выбранный пользователь не найден')
+            queuebot.bot.send_message(chat_id=user_id, text=f'Выбранный пользователь не найден')
 
+
+def callback_send_request_start(user_id: int):
+    queuebot.bot.send_message(chat_id=user_id, text='Для начала работы с ботом напишите /start')
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     queuebot = QueueBot()
     db = queuebot.db
     queuebot.run()
