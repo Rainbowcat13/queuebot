@@ -11,6 +11,8 @@ from telegram.ext import Updater, CommandHandler, InlineQueryHandler, CallbackQu
 from db import DBConnector
 from lesson_settings import *
 from functions import *
+from delays_table import *
+from prior import *
 
 
 class QueueBot:
@@ -49,8 +51,6 @@ class QueueBot:
 
         # callback handlers
         #     usual callbacks
-        self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_add, pattern='^add$'))
-        self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_delete, pattern='^delete$'))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_teacher_chosen,
                                                          pattern='^teacher_chosen.*$'))
         self.dispatcher.add_handler(CallbackQueryHandler(callback=callback_refresh_statistics,
@@ -85,18 +85,14 @@ class QueueBot:
                 text += f'* {u["problem"]} — {u["place"]} место ({short_teacher_name})\n'
         return text
 
-    def recalculate_queue(self, teacher):  # NOT REFACTORED
-        priority = lesson_settings['problems_priority']
+    def recalculate_queue(self, teacher):
         old_queue = self.db.aggregate_many('queues', {'teacher': teacher})
         if old_queue is not None:
             old_places = {}
             new_places = []
             with_changes = []
             old_queue = list(old_queue)
-            old_queue.sort(key=lambda x: (  # Here must be good comparator with lots of priorities
-                0 if 'first_time' not in x else (0 if x['first_time'] else 1),
-                0 if x['problem'] not in priority else priority[x['problem']],
-                0 if 'insert_time' not in x else x['insert_time']))
+            old_queue.sort(key=lambda x: x['prior'])
             for el in old_queue:
                 old_places[el['_id']] = el['place']
                 new_places.append(el)
@@ -118,8 +114,8 @@ class QueueBot:
             free_queue = True
             for st in full_queue:
                 free_queue = False
-                user_name = self.db.aggregate_one('users', {'user_id': st['user_id']})['name']
-                text += str(st['place']) + ': ' + user_name + '\n'
+                user = self.db.aggregate_one('users', {'user_id': st['user_id']})
+                text += str(st['place']) + '\. ' + user['name'] + ' \(' + str(get_homework_id(st['problem'])) + '\)' '\n'
             if free_queue:
                 text += '_в очереди никого нет_\n'
             text += 'Время обновления: ' + strftime('%H:%M:%S')
@@ -134,7 +130,7 @@ class QueueBot:
                                               update={'messages_id': messages_ids})
                     else:
                         self.bot.edit_message_text(chat_id=chat['chat_id'], message_id=messages_ids[teacher],
-                                                   parse_mode=ParseMode.MARKDOWN, text=text)
+                                                   parse_mode=ParseMode.MARKDOWN_V2, text=text)
                 except:
                     print(f'Can not send queue updates in chat {chat}')
 
@@ -196,33 +192,23 @@ def callback_logout(update, context):
         update.message.reply_text('Деавторизация успешна')
 
 
-def callback_add(update, context):  # NOT REFACTORED
+def callback_add(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     message_id = query.message.message_id
     user = db.aggregate_one('users', {'user_id': user_id})
+    task_id = get_homework_id(user['problem'])
 
-    if time() < lesson_settings['starting'] and db.aggregate_one('admins', {'user_id': user_id}) is None:
-        query.answer('Практика еще не началась!!!')
-        return
+    has_delay = delays_table.get_delay(user['name'], task_id)
+    has_delay = True  # for testing purposes
 
-    already_in_queue = db.aggregate_one('queues', {'user_id': user_id,
-                                                   'teacher': db.aggregate_one('users',
-                                                                               {'user_id': user_id})['teacher']})
+    priority = prior.calc_prior(user_id, task_id, has_delay, get_elapsed_time())
 
-    if already_in_queue is not None:
-        queuebot.bot.edit_message_text(chat_id=user_id, message_id=message_id,
-                                       text='Вы уже в очереди!')
-        return
-
-    was_in_queue_to_teacher = user['problem'] not in user['was_in_queue']
     db.add_one('queues', {'user_id': user_id, 'problem': user['problem'],
-                          'teacher': user['teacher'], 'place': 0, 'insert_time': time(),
-                          'first_time': was_in_queue_to_teacher})
+                          'teacher': user['teacher'], 'place': 0, 'prior': priority})
 
-    if not was_in_queue_to_teacher:
-        user['was_in_queue'].append(user['problem'])
-    db.aggregate_one('users', {'user_id': user_id}, update={'was_in_queue': user['was_in_queue']})
+    print("add request:", user_id, task_id, prior.get_penalty(user_id, task_id))
+    print(prior.get_penalties())
 
     changed_entries = queuebot.recalculate_queue(user['teacher'])
     new_place = 0
@@ -240,7 +226,7 @@ def callback_add(update, context):  # NOT REFACTORED
     queuebot.send_queue_updates(user['teacher'])
 
 
-def callback_admin_clear_queue(update, context):  # NOT REFACTORED
+def callback_admin_clear_queue(update, context):
     query = update.callback_query
     user_id = query.message.chat.id
     if db.aggregate_one('admins', {'user_id': user_id}) is None:
@@ -248,22 +234,12 @@ def callback_admin_clear_queue(update, context):  # NOT REFACTORED
         return
 
     db.aggregate_many('users', {'user_id': user_id}, update={'problem': '',
-                                                             'teacher': '',
-                                                             'was_in_queue': []})
+                                                             'teacher': ''})
     db.aggregate_many('queues', delete=True)
     query.message.reply_text('Очередь очищена')
 
     for teacher in TEACHERS:
         queuebot.send_queue_updates(teacher)
-
-
-def callback_delete(update, context):
-    user_id = update.message.chat.id
-    user = db.aggregate_one('users', {'user_id': user_id})
-    teacher = user['teacher']
-    db.aggregate_many('queues', {'user_id': user_id, 'teacher': teacher, 'problem': user['problem']}, delete=True)
-    queuebot.send_messages_to_top_queue(queuebot.recalculate_queue(teacher))
-    queuebot.send_queue_updates(teacher)
 
 
 def callback_inline_query(update, context):  # NOT REFACTORED
@@ -334,7 +310,7 @@ def callback_login(update, context):  # NOT REFACTORED
         return
 
     db.add_one('users', {'user_id': user_id, 'name': name, 'group': group,
-                         'problem': '', 'teacher': '', 'was_in_queue': []})
+                         'problem': '', 'teacher': ''})
     callback_start(update, context)
 
 
@@ -364,6 +340,10 @@ def callback_join_queue(update, context):  # NOT REFACTORED
 
     if db.aggregate_one('homeworks', {'name': hw}) is None:
         queuebot.bot.send_message(chat_id=user_id, text='Произошла ошибка при выборе задачи')
+        return
+
+    if time() < lesson_settings['starting'] and db.aggregate_one('admins', {'user_id': user_id}) is None:
+        queuebot.bot.send_message(chat_id=user_id, text='Практика еще не началась')
         return
 
     db.aggregate_one('users', {'user_id': user_id}, update={'problem': hw})
@@ -402,7 +382,7 @@ def callback_teacher_chosen(update, context):
     callback_add(update, context)
 
 
-def callback_done(update, context):  # NOT REFACTORED
+def callback_done(update, context):
     if not real_user(update):
         return
     user_id = update.message.chat.id
@@ -426,9 +406,14 @@ def callback_done(update, context):  # NOT REFACTORED
     if entry is None:
         queuebot.bot.send_message(chat_id=user_id, text='Вас нет в очереди на эту задачу!')
         return
-    db.aggregate_one('users', {'user_id': user_id},
-                     update={'teacher': entry['teacher'], 'problem': hw})
-    callback_delete(update, context)
+
+    prior.incr_penalty(user_id, hw_id - 1)
+    #delays_table.set_delay(user_id, hw_id, True) # For debug purposes
+
+    db.aggregate_many('queues', {'user_id': user_id, 'problem': hw}, delete=True)
+    queuebot.send_messages_to_top_queue(queuebot.recalculate_queue(entry['teacher']))
+    queuebot.send_queue_updates(entry['teacher'])
+
     queuebot.show_status(user_id)
 
 
@@ -510,3 +495,5 @@ if __name__ == '__main__':
     queuebot = QueueBot()
     db = queuebot.db
     queuebot.run()
+
+    delays_table.dump()
